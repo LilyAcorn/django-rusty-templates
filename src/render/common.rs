@@ -214,6 +214,7 @@ mod tests {
                 context,
                 request: None,
                 autoescape: false,
+                language: None,
             };
             let template = TemplateString("{{ name }}");
             let variable = Variable::new((3, 4));
@@ -236,6 +237,7 @@ mod tests {
                 context,
                 request: None,
                 autoescape: false,
+                language: None,
             };
             let template = TemplateString("{{ data.name }}");
             let variable = Variable::new((3, 9));
@@ -257,6 +259,7 @@ mod tests {
                 context,
                 request: None,
                 autoescape: false,
+                language: None,
             };
             let template = TemplateString("{{ names.0 }}");
             let variable = Variable::new((3, 7));
@@ -290,6 +293,7 @@ user = User('Lily')
                 context,
                 request: None,
                 autoescape: false,
+                language: None,
             };
             let template = TemplateString("{{ user.name }}");
             let variable = Variable::new((3, 9));
@@ -310,6 +314,7 @@ user = User('Lily')
                 context,
                 request: None,
                 autoescape: true,
+                language: None,
             };
             let template = TemplateString("{{ html }}");
             let html = Variable::new((3, 4));

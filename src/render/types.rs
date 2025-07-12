@@ -14,6 +14,7 @@ pub struct Context {
     pub request: Option<Py<PyAny>>,
     pub context: HashMap<String, Py<PyAny>>,
     pub autoescape: bool,
+    pub language: Option<String>,
 }
 
 #[derive(Debug, IntoPyObject)]

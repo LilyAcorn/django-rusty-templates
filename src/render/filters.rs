@@ -386,6 +386,7 @@ mod tests {
                 context,
                 request: None,
                 autoescape: false,
+                language: None,
             };
             let template = TemplateString("{{ name|default:'Bryony' }}");
             let variable = Variable::new((3, 4));
@@ -584,6 +585,7 @@ mod tests {
                 context,
                 request: None,
                 autoescape: false,
+                language: None,
             };
             let template = TemplateString("{{ quotes|addslashes }}");
             let variable = Variable::new((3, 6));
@@ -646,6 +648,7 @@ mod tests {
                 context,
                 request: None,
                 autoescape: false,
+                language: None,
             };
             let template = TemplateString("{{ name|default:'Bryony' }}");
             let variable = Variable::new((3, 4));
@@ -673,6 +676,7 @@ mod tests {
                 context,
                 request: None,
                 autoescape: false,
+                language: None,
             };
             let template = TemplateString("{{ count|default:12}}");
             let variable = Variable::new((3, 5));
@@ -700,6 +704,7 @@ mod tests {
                 context,
                 request: None,
                 autoescape: false,
+                language: None,
             };
             let template = TemplateString("{{ count|default:3.5}}");
             let variable = Variable::new((3, 5));
@@ -728,6 +733,7 @@ mod tests {
                 context,
                 request: None,
                 autoescape: false,
+                language: None,
             };
             let template = TemplateString("{{ name|default:me}}");
             let variable = Variable::new((3, 4));
@@ -756,6 +762,7 @@ mod tests {
                 context,
                 request: None,
                 autoescape: false,
+                language: None,
             };
             let template = TemplateString("{{ name|lower }}");
             let variable = Variable::new((3, 4));
@@ -780,6 +787,7 @@ mod tests {
                 context,
                 request: None,
                 autoescape: false,
+                language: None,
             };
             let template = TemplateString("{{ name|lower }}");
             let variable = Variable::new((3, 4));
@@ -804,6 +812,7 @@ mod tests {
                 context,
                 request: None,
                 autoescape: false,
+                language: None,
             };
             let template = TemplateString("{{ name|default:'Bryony'|lower }}");
             let variable = Variable::new((3, 4));

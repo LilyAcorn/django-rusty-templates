@@ -317,10 +317,14 @@ pub mod django_rusty_templates {
                 None => base_context,
             };
             let request = request.map(|request| request.unbind());
+            let django_translation = py.import("django.utils.translation")?;
+            let get_language = django_translation.getattr("get_language")?;
+            let language = get_language.call0()?.extract()?;
             let mut context = Context {
                 request,
                 context,
                 autoescape: self.autoescape,
+                language,
             };
             self._render(py, &mut context)
         }
