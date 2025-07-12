@@ -7,7 +7,7 @@ use pyo3::sync::GILOnceCell;
 use pyo3::types::PyType;
 
 use crate::filters::{
-    AddFilter, AddSlashesFilter, CapfirstFilter, DefaultFilter, EscapeFilter, ExternalFilter,
+    AddFilter, AddSlashesFilter, CapfirstFilter, CenterFilter, DefaultFilter, EscapeFilter, ExternalFilter,
     FilterType, LowerFilter, SafeFilter, SlugifyFilter, UpperFilter,
 };
 use crate::parse::Filter;
@@ -16,6 +16,8 @@ use crate::render::{Resolve, ResolveFailures, ResolveResult};
 use crate::types::TemplateString;
 use regex::Regex;
 use unicode_normalization::UnicodeNormalization;
+use num_bigint::BigInt;
+use num_traits::ToPrimitive;
 
 // Used for replacing all non-word and non-spaces with an empty string
 static NON_WORD_RE: LazyLock<Regex> =
@@ -66,6 +68,7 @@ impl Resolve for Filter {
             FilterType::Add(filter) => filter.resolve(left, py, template, context),
             FilterType::AddSlashes(filter) => filter.resolve(left, py, template, context),
             FilterType::Capfirst(filter) => filter.resolve(left, py, template, context),
+            FilterType::Center(filter) => filter.resolve(left, py, template, context),
             FilterType::Default(filter) => filter.resolve(left, py, template, context),
             FilterType::Escape(filter) => filter.resolve(left, py, template, context),
             FilterType::External(filter) => filter.resolve(left, py, template, context),
@@ -161,6 +164,47 @@ impl ResolveFilter for CapfirstFilter {
             None => "".as_content(),
         };
         Ok(content)
+    }
+}
+
+impl ResolveFilter for CenterFilter {
+    fn resolve<'t, 'py>(
+        &self,
+        variable: Option<Content<'t, 'py>>,
+        py: Python<'py>,
+        template: TemplateString<'t>,
+        context: &mut Context,
+    ) -> ResolveResult<'t, 'py> {
+        let left: usize;
+        let right: usize;
+        let arg_size: usize;
+        let content = match variable {
+            Some(content) => {
+                content.render(context)?.into_owned()
+            },
+            None => return Ok("".as_content()),
+        };
+        let arg = self
+            .argument
+            .resolve(py, template, context, ResolveFailures::Raise)?
+            .expect("missing argument in context should already have raised");
+        let arg_int = arg.to_bigint();
+        match arg_int {
+            Some(arg_int) => {
+                arg_size = arg_int.to_usize().unwrap();
+                if arg_size <= content.len() {
+                    return Ok(content.into_content());
+                }
+                right = (arg_size - content.len()) / 2;
+                left = arg_size - content.len() - right;
+            },
+            None => {
+                return Ok("".as_content());
+            }
+        }
+        let string_left = " ".repeat(left);
+        let string_right = " ".repeat(right);
+        Ok((string_left + &content + &string_right).into_content())
     }
 }
 
@@ -350,12 +394,13 @@ impl ResolveFilter for UpperFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::filters::{AddSlashesFilter, DefaultFilter, LowerFilter, UpperFilter};
+    use crate::filters::{AddSlashesFilter, CenterFilter, DefaultFilter, LowerFilter, UpperFilter};
     use crate::parse::TagElement;
     use crate::render::Render;
     use crate::template::django_rusty_templates::{EngineData, Template};
     use crate::types::{Argument, ArgumentType, Text, Variable};
 
+    use pyo3::panic;
     use pyo3::types::{PyDict, PyString};
     static MARK_SAFE: GILOnceCell<Py<PyAny>> = GILOnceCell::new();
 
@@ -633,6 +678,38 @@ mod tests {
 
             let error_string = format!("{error}");
             assert!(error_string.contains("capfirst filter does not take an argument"));
+        })
+    }
+
+    #[test]
+    fn test_render_filter_center() {
+        pyo3::prepare_freethreaded_python();
+
+        Python::with_gil(|py| {
+            let engine = EngineData::empty();
+            let template_string = "{{ var|center:'11' }}".to_string();
+            let context = PyDict::new(py);
+            context.set_item("var", "hello").unwrap();
+            let template = Template::new_from_string(py, template_string, &engine).unwrap();
+            let result = template.render(py, Some(context), None).unwrap();
+
+            assert_eq!(result, "   hello   ");
+
+            let context = PyDict::new(py);
+            context.set_item("var", "django").unwrap();
+            let template_string = "{{ var|center:'15' }}".to_string();
+            let template = Template::new_from_string(py, template_string, &engine).unwrap();
+            let result = template.render(py, Some(context), None).unwrap();
+
+            assert_eq!(result, "     django    ");
+
+            let context = PyDict::new(py);
+            context.set_item("var", "django").unwrap();
+            let template_string = "{{ var|center:'1' }}".to_string();
+            let template = Template::new_from_string(py, template_string, &engine).unwrap();
+            let result = template.render(py, Some(context), None).unwrap();
+
+            assert_eq!(result, "django");
         })
     }
 
