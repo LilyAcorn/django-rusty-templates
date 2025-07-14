@@ -10,9 +10,9 @@ pub mod django_rusty_templates {
     use pyo3::import_exception_bound;
     use pyo3::intern;
     use pyo3::prelude::*;
-    use pyo3::types::{PyBool, PyDict, PyString};
+    use pyo3::types::{PyBool, PyDict, PyList, PyString, PyTuple};
 
-    use crate::loaders::{AppDirsLoader, CachedLoader, FileSystemLoader, Loader};
+    use crate::loaders::{AppDirsLoader, CachedLoader, FileSystemLoader, Loader, LocMemLoader};
     use crate::parse::{Parser, TokenTree};
     use crate::render::Render;
     use crate::render::types::Context;
@@ -112,12 +112,115 @@ pub mod django_rusty_templates {
     }
 
     impl Engine {
+        fn get_template_loaders<'py>(
+            py: Python<'py>,
+            template_loaders: &Bound<'_, PyList>,
+        ) -> Result<Vec<Loader>, PyErr> {
+            template_loaders
+                .iter()
+                .map(|template_loader| Self::find_template_loader(py, template_loader))
+                .collect()
+        }
+
         fn find_template_loader<'py>(
-            _py: Python<'py>,
-            _loader: &str,
-            _args: Option<Bound<'py, PyAny>>,
-        ) -> PyResult<Bound<'py, PyAny>> {
-            todo!()
+            py: Python<'py>,
+            ld: Bound<'_, PyAny>,
+        ) -> Result<Loader, PyErr> {
+            // Try as string first
+            if let Ok(loader_str) = ld.downcast::<PyString>() {
+                return Self::map_loader(
+                    py,
+                    &loader_str.extract::<String>()?,
+                    Vec::new(),
+                    HashMap::new(),
+                );
+            }
+
+            // Try as tuple (loader, args)
+            if let Ok(loader_tuple) = ld.downcast::<PyTuple>() {
+                if let Ok((loader_obj, args)) =
+                    loader_tuple.extract::<(Bound<'_, PyString>, Bound<'_, PyAny>)>()
+                {
+                    let loader_path = loader_obj.extract::<String>()?;
+
+                    // Process args based on type
+                    // Check if args is PyList
+                    if let Ok(true) = args.is_instance(&py.get_type::<PyList>()) {
+                        let args_list = args.downcast::<PyList>()?;
+                        let args_vec = args_list
+                            .iter()
+                            .map(|item| item.extract::<String>())
+                            .collect::<Result<Vec<String>, PyErr>>()?;
+
+                        return Self::map_loader(py, &loader_path, args_vec, HashMap::new());
+                    // Check if args is PyTuple
+                    } else if let Ok(true) = args.is_instance(&py.get_type::<PyTuple>()) {
+                        let args_tuple = args.downcast::<PyTuple>()?;
+                        let args_vec = args_tuple
+                            .iter()
+                            .map(|item| item.extract::<String>())
+                            .collect::<Result<Vec<String>, PyErr>>()?;
+
+                        return Self::map_loader(py, &loader_path, args_vec, HashMap::new());
+                    // Check if args is PyDict
+                    } else if let Ok(true) = args.is_instance(&py.get_type::<PyDict>()) {
+                        let args_dict = args.downcast::<PyDict>()?;
+                        let args_hashmap = args_dict
+                            .iter()
+                            .map(|(key, value)| {
+                                Ok((key.extract::<String>()?, value.extract::<String>()?))
+                            })
+                            .collect::<Result<HashMap<String, String>, PyErr>>()?;
+
+                        return Self::map_loader(py, &loader_path, Vec::new(), args_hashmap);
+                    } else {
+                        return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(format!(
+                            "Unsupported args type: {:?}",
+                            args
+                        )));
+                    }
+                }
+            }
+
+            Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(format!(
+                "Unsupported loader type: {:?}",
+                ld
+            )))
+        }
+
+        fn map_loader(
+            py: Python<'_>,
+            loader_path: &str,
+            args_vec: Vec<String>,
+            args_hashmap: HashMap<String, String>,
+        ) -> Result<Loader, PyErr> {
+            match loader_path {
+                "django.template.loaders.filesystem.Loader" => {
+                    Ok(Loader::FileSystem(FileSystemLoader::new(
+                        args_vec.into_iter().map(PathBuf::from).collect(),
+                        encoding_rs::UTF_8,
+                    )))
+                }
+                "django.template.loaders.app_directories.Loader" => {
+                    Ok(Loader::AppDirs(AppDirsLoader::new(encoding_rs::UTF_8)))
+                }
+                "django.template.loaders.locmem.Loader" => {
+                    Ok(Loader::LocMem(LocMemLoader::new(args_hashmap)))
+                }
+                "django.template.loaders.cached.Loader" => {
+                    // Process nested loaders without cloning the whole args_vec
+                    let nested_loaders = args_vec
+                        .iter()
+                        .map(|item| Self::map_loader(py, item, Vec::new(), HashMap::new()))
+                        .collect::<Result<Vec<_>, _>>()?;
+
+                    Ok(Loader::Cached(CachedLoader::new(nested_loaders)))
+                }
+                unknown => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                    "Unsupported loader type: {}",
+                    unknown
+                ))),
+            }
         }
     }
 
@@ -132,7 +235,7 @@ pub mod django_rusty_templates {
             app_dirs: bool,
             context_processors: Option<Bound<'_, PyAny>>,
             debug: bool,
-            loaders: Option<Bound<'_, PyAny>>,
+            loaders: Option<Bound<'_, PyList>>,
             string_if_invalid: String,
             file_charset: String,
             libraries: Option<Bound<'_, PyAny>>,
@@ -158,7 +261,22 @@ pub mod django_rusty_templates {
                     );
                     return Err(err);
                 }
-                Some(_loaders) => todo!(),
+                Some(_loaders) => {
+                    let py_loaders = _loaders.downcast::<PyList>().unwrap();
+
+                    let loaders = match Self::get_template_loaders(_py, py_loaders) {
+                        Ok(loaders) => loaders,
+                        Err(err) => {
+                            let error = format!(
+                                "Invalid template loader specified. ImportError raised when trying to load '{}'",
+                                err
+                            );
+                            return Err(InvalidTemplateLibrary::new_err(error));
+                        }
+                    };
+
+                    loaders
+                }
                 None => {
                     let filesystem_loader =
                         Loader::FileSystem(FileSystemLoader::new(dirs.clone(), encoding));
@@ -332,7 +450,7 @@ mod tests {
     use super::django_rusty_templates::*;
 
     use pyo3::Python;
-    use pyo3::types::{PyDict, PyDictMethods, PyString};
+    use pyo3::types::{PyDict, PyDictMethods, PyList, PyString, PyTuple};
 
     #[test]
     fn test_syntax_error() {
@@ -533,6 +651,94 @@ user = User(["Lily"])
                 .unwrap();
             let cloned = template.clone();
             assert_eq!(cloned, template);
+        })
+    }
+
+    #[test]
+    fn test_engine_loader_priority() {
+        pyo3::prepare_freethreaded_python();
+
+        Python::with_gil(|py| {
+            // Create a Python list
+            let py_list = PyList::new(
+                py,
+                &[
+                    PyString::new(py, "django.template.loaders.filesystem.Loader").into_any(),
+                    PyString::new(py, "django.template.loaders.app_directories.Loader").into_any(),
+                ],
+            );
+
+            let engine = Engine::new(
+                py,
+                None,
+                false,
+                None,
+                false,
+                py_list.ok(),
+                "".to_string(),
+                "utf-8".to_string(),
+                None,
+                None,
+                false,
+            )
+            .unwrap();
+
+            let template_string = PyString::new(py, "Hello {{ user }}!");
+            let template = engine.from_string(template_string).unwrap();
+            let context = PyDict::new(py);
+
+            assert_eq!(template.render(py, Some(context), None).unwrap(), "Hello !");
+        })
+    }
+
+    #[test]
+    fn test_engine_cached_loader_priority() {
+        pyo3::prepare_freethreaded_python();
+
+        Python::with_gil(|py| {
+            // // Create a Python string
+            let py_string = PyString::new(py, "django.template.loaders.filesystem.Loader");
+
+            // Create a Python tuple
+            let py_tuple = PyTuple::new(
+                py,
+                &[
+                    PyString::new(py, "django.template.loaders.cached.Loader").into_any(),
+                    PyList::new(
+                        py,
+                        &[
+                            PyString::new(py, "django.template.loaders.filesystem.Loader"),
+                            PyString::new(py, "django.template.loaders.app_directories.Loader"),
+                        ],
+                    )
+                    .unwrap()
+                    .into_any(),
+                ],
+            );
+
+            // Create a heterogeneous Python list (containing a string and a tuple)
+            let py_list = PyList::new(py, &[py_string.into_any(), py_tuple.unwrap().into_any()]);
+
+            let engine = Engine::new(
+                py,
+                None,
+                false,
+                None,
+                false,
+                py_list.ok(),
+                "".to_string(),
+                "utf-8".to_string(),
+                None,
+                None,
+                false,
+            )
+            .unwrap();
+
+            let template_string = PyString::new(py, "Hello {{ user }}!");
+            let template = engine.from_string(template_string).unwrap();
+            let context = PyDict::new(py);
+
+            assert_eq!(template.render(py, Some(context), None).unwrap(), "Hello !");
         })
     }
 }
