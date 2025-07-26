@@ -2,12 +2,13 @@ use std::borrow::Cow;
 use std::sync::LazyLock;
 
 use html_escape::encode_quoted_attribute_to_string;
+
 use pyo3::prelude::*;
 use pyo3::sync::GILOnceCell;
 use pyo3::types::PyType;
 
 use crate::filters::{
-    AddFilter, AddSlashesFilter, CapfirstFilter, DefaultFilter, EscapeFilter, ExternalFilter,
+    AddFilter, AddSlashesFilter, CapfirstFilter, CenterFilter, DefaultFilter, EscapeFilter, ExternalFilter,
     FilterType, LowerFilter, SafeFilter, SlugifyFilter, UpperFilter,
 };
 use crate::parse::Filter;
@@ -66,6 +67,7 @@ impl Resolve for Filter {
             FilterType::Add(filter) => filter.resolve(left, py, template, context),
             FilterType::AddSlashes(filter) => filter.resolve(left, py, template, context),
             FilterType::Capfirst(filter) => filter.resolve(left, py, template, context),
+            FilterType::Center(filter) => filter.resolve(left, py, template, context),
             FilterType::Default(filter) => filter.resolve(left, py, template, context),
             FilterType::Escape(filter) => filter.resolve(left, py, template, context),
             FilterType::External(filter) => filter.resolve(left, py, template, context),
@@ -160,6 +162,49 @@ impl ResolveFilter for CapfirstFilter {
             None => "".as_content(),
         };
         Ok(content)
+    }
+}
+
+impl ResolveFilter for CenterFilter {
+    fn resolve<'t, 'py>(
+        &self,
+        variable: Option<Content<'t, 'py>>,
+        py: Python<'py>,
+        template: TemplateString<'t>,
+        context: &mut Context,
+    ) -> ResolveResult<'t, 'py> {
+        let left: usize;
+        let right: usize;
+        let content = match variable {
+            Some(content) => {
+                content.render(context)?
+            },
+            None => return Ok("".as_content()),
+        };
+        let arg = self
+            .argument
+            .resolve(py, template, context, ResolveFailures::Raise)?
+            .expect("missing argument in context should already have raised");
+        let size = arg.to_usize()?;
+
+        if size <= content.len() {
+            return Ok(Some(Content::String(ContentString::String((content)))));
+        }
+        if size % 2 == 0 && content.len() % 2 != 0 {
+            // If the size is even and the content length is odd, we need to adjust the centering
+            right = (size - content.len() + 1) / 2;
+            left = size - content.len() - right;
+        } else {
+            right = (size - content.len()) / 2;
+            left = size - content.len() - right;
+        }
+        let mut centered = String::with_capacity(size);
+
+        centered.push_str(&" ".repeat(left));
+        centered.push_str(&content);
+        centered.push_str(&" ".repeat(right));
+
+        Ok(centered.into_content())
     }
 }
 
@@ -349,7 +394,7 @@ impl ResolveFilter for UpperFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::filters::{AddSlashesFilter, DefaultFilter, LowerFilter, UpperFilter};
+    use crate::filters::{AddSlashesFilter, CenterFilter, DefaultFilter, LowerFilter, UpperFilter};
     use crate::parse::TagElement;
     use crate::render::Render;
     use crate::template::django_rusty_templates::{EngineData, Template};
@@ -632,6 +677,87 @@ mod tests {
 
             let error_string = format!("{error}");
             assert!(error_string.contains("capfirst filter does not take an argument"));
+        })
+    }
+
+    #[test]
+    fn test_render_filter_center() {
+        pyo3::prepare_freethreaded_python();
+
+        Python::with_gil(|py| {
+            let engine = EngineData::empty();
+            let template_string = "{{ var|center:'11' }}".to_string();
+            let context = PyDict::new(py);
+            context.set_item("var", "hello").unwrap();
+            let template = Template::new_from_string(py, template_string, &engine).unwrap();
+            let result = template.render(py, Some(context), None).unwrap();
+
+            assert_eq!(result, "   hello   ");
+
+            let context = PyDict::new(py);
+            context.set_item("var", "django").unwrap();
+            let template_string = "{{ var|center:'15' }}".to_string();
+            let template = Template::new_from_string(py, template_string, &engine).unwrap();
+            let result = template.render(py, Some(context), None).unwrap();
+
+            assert_eq!(result, "     django    ");
+
+            let context = PyDict::new(py);
+            context.set_item("var", "django").unwrap();
+            let template_string = "{{ var|center:'1' }}".to_string();
+            let template = Template::new_from_string(py, template_string, &engine).unwrap();
+            let result = template.render(py, Some(context), None).unwrap();
+
+            assert_eq!(result, "django");
+        })
+    }
+
+    #[test]
+    fn test_render_filter_center_no_argument_return_err() {
+        pyo3::prepare_freethreaded_python();
+
+        Python::with_gil(|py| {
+            let engine = EngineData::empty();
+            let template_string = "{{ var|center }}".to_string();
+            let context = PyDict::new(py);
+            context.set_item("var", "hello").unwrap();
+            let error = Template::new_from_string(py, template_string, &engine).unwrap_err();
+
+            let error_string = format!("{error}");
+
+            assert!(error_string.contains("Expected an argument"));
+        })
+    }
+
+    #[test]
+    fn test_render_filter_center_invalid_argument_return_err() {
+        pyo3::prepare_freethreaded_python();
+
+        Python::with_gil(|py| {
+            let engine = EngineData::empty();
+            let template_string = "{{ var|center:'invalid' }}".to_string();
+            let context = PyDict::new(py);
+            context.set_item("var", "hello").unwrap();
+            let template = Template::new_from_string(py, template_string, &engine).unwrap();
+            let error = template.render(py, Some(context), None).unwrap_err();
+            let error_string = format!("{error}");
+
+            assert!(error_string.contains("invalid literal for int() with base 10"));
+        })
+    }
+
+    #[test]
+    fn test_render_filter_center_no_variable() {
+        pyo3::prepare_freethreaded_python();
+
+        Python::with_gil(|py| {
+            let engine = EngineData::empty();
+            let template_string = "{{ var|center:'11' }}".to_string();
+            let context = PyDict::new(py);
+            let template = Template::new_from_string(py, template_string, &engine).unwrap();
+            let result = template.render(py, Some(context), None).unwrap();
+
+            assert_eq!(result, "");
         })
     }
 
