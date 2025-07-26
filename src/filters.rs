@@ -12,6 +12,7 @@ pub enum FilterType {
     Default(DefaultFilter),
     Escape(EscapeFilter),
     External(ExternalFilter),
+    First(FirstFilter),
     Lower(LowerFilter),
     Safe(SafeFilter),
     Slugify(SlugifyFilter),
@@ -54,6 +55,9 @@ pub struct ExternalFilter {
     pub filter: Arc<Py<PyAny>>,
     pub argument: Option<Argument>,
 }
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct FirstFilter;
 
 impl ExternalFilter {
     pub fn new(filter: Py<PyAny>, argument: Option<Argument>) -> Self {
