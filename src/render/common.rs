@@ -11,6 +11,8 @@ use crate::error::RenderError;
 use crate::parse::{TagElement, TokenTree};
 use crate::types::Argument;
 use crate::types::ArgumentType;
+use crate::types::ForVariable;
+use crate::types::ForVariableName;
 use crate::types::TemplateString;
 use crate::types::Text;
 use crate::types::TranslatedText;
@@ -93,6 +95,29 @@ impl Resolve for Variable {
             object_at.1 += key_at.1 + 1;
         }
         Ok(Some(Content::Py(variable)))
+    }
+}
+
+impl Resolve for ForVariable {
+    fn resolve<'t, 'py>(
+        &self,
+        _py: Python<'py>,
+        _template: TemplateString<'t>,
+        context: &mut Context,
+        _failures: ResolveFailures,
+    ) -> ResolveResult<'t, 'py> {
+        let for_loop = match context.get_for_loop(self.parent_count) {
+            Some(for_loop) => for_loop,
+            None => return Ok(None),
+        };
+        Ok(Some(match self.variant {
+            ForVariableName::Counter => Content::Int(for_loop.counter().into()),
+            ForVariableName::Counter0 => Content::Int(for_loop.counter0().into()),
+            ForVariableName::RevCounter => Content::Int(for_loop.rev_counter().into()),
+            ForVariableName::RevCounter0 => Content::Int(for_loop.rev_counter0().into()),
+            ForVariableName::First => Content::Bool(for_loop.first()),
+            ForVariableName::Last => Content::Bool(for_loop.last()),
+        }))
     }
 }
 
@@ -183,6 +208,7 @@ impl Resolve for TagElement {
             Self::Text(text) => text.resolve(py, template, context, failures),
             Self::TranslatedText(text) => text.resolve(py, template, context, failures),
             Self::Variable(variable) => variable.resolve(py, template, context, failures),
+            Self::ForVariable(variable) => variable.resolve(py, template, context, failures),
             Self::Filter(filter) => filter.resolve(py, template, context, failures),
             Self::Int(int) => Ok(Some(Content::Int(int.clone()))),
             Self::Float(float) => Ok(Some(Content::Float(*float))),
@@ -223,6 +249,7 @@ impl Render for TokenTree {
             Self::Float(f) => Ok(f.to_string().into()),
             Self::Tag(tag) => tag.render(py, template, context),
             Self::Variable(variable) => variable.render(py, template, context),
+            Self::ForVariable(variable) => variable.render(py, template, context),
             Self::Filter(filter) => filter.render(py, template, context),
         }
     }

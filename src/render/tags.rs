@@ -4,12 +4,12 @@ use num_bigint::BigInt;
 use num_traits::cast::ToPrimitive;
 use pyo3::exceptions::PyAttributeError;
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyDict, PyList, PyNone};
+use pyo3::types::{PyBool, PyDict, PyList, PyNone, PyString};
 
 use super::types::{Content, ContentString, Context};
 use super::{Evaluate, Render, RenderResult, Resolve, ResolveFailures, ResolveResult};
 use crate::error::PyRenderError;
-use crate::parse::{IfCondition, Tag, Url};
+use crate::parse::{For, IfCondition, Tag, Url};
 use crate::template::django_rusty_templates::NoReverseMatch;
 use crate::types::TemplateString;
 use crate::utils::PyResultMethods;
@@ -95,6 +95,7 @@ impl Evaluate for Content<'_, '_> {
             Self::String(s) => !s.as_raw().is_empty(),
             Self::Float(f) => *f != 0.0,
             Self::Int(n) => *n != BigInt::ZERO,
+            Self::Bool(_) => todo!(),
         })
     }
 }
@@ -424,6 +425,7 @@ impl Contains<Option<Content<'_, '_>>> for Content<'_, '_> {
                 Self::String(obj) => Some(obj.as_raw().contains(other.as_raw().as_ref())),
                 Self::Int(_) | Self::Float(_) => None,
                 Self::Py(obj) => obj.contains(other).ok(),
+                Self::Bool(_) => todo!(),
             },
             Some(Content::Int(n)) => match self {
                 Self::Py(obj) => obj.contains(n).ok(),
@@ -433,6 +435,7 @@ impl Contains<Option<Content<'_, '_>>> for Content<'_, '_> {
                 Self::Py(obj) => obj.contains(f).ok(),
                 _ => None,
             },
+            Some(Content::Bool(_)) => todo!(),
         }
     }
 }
@@ -721,8 +724,85 @@ impl Render for Tag {
                     falsey.render(py, template, context)?
                 }
             }
+            Self::For(for_tag) => for_tag.render(py, template, context)?,
             Self::Load => Cow::Borrowed(""),
             Self::Url(url) => url.render(py, template, context)?,
         })
+    }
+}
+
+impl For {
+    fn render_python<'t>(
+        &self,
+        iterable: &Bound<'_, PyAny>,
+        py: Python<'_>,
+        template: TemplateString<'t>,
+        context: &mut Context,
+    ) -> RenderResult<'t> {
+        let mut parts = Vec::new();
+        let mut list: Vec<_> = iterable.try_iter()?.collect();
+        if self.reversed {
+            list.reverse();
+        }
+        context.push_for_loop(list.len());
+        for values in list {
+            context.push_variables(&self.variables, values?)?;
+            parts.push(self.body.render(py, template, context)?);
+            context.increment_for_loop();
+        }
+        context.pop_for_loop();
+        Ok(Cow::Owned(parts.join("")))
+    }
+
+    fn render_string<'t>(
+        &self,
+        string: &str,
+        py: Python<'_>,
+        template: TemplateString<'t>,
+        context: &mut Context,
+    ) -> RenderResult<'t> {
+        if self.variables.len() > 1 {
+            todo!()
+        }
+        let mut parts = Vec::new();
+        let mut chars: Vec<_> = string.chars().collect();
+        if self.reversed {
+            chars.reverse()
+        }
+
+        let variable = &self.variables[0];
+        context.push_for_loop(chars.len());
+        for c in chars {
+            let c = PyString::new(py, &c.to_string());
+            context.push_variable(variable.clone(), c.into_any());
+            parts.push(self.body.render(py, template, context)?);
+            context.increment_for_loop();
+        }
+        context.pop_for_loop();
+        Ok(Cow::Owned(parts.join("")))
+    }
+}
+
+impl Render for For {
+    fn render<'t>(
+        &self,
+        py: Python<'_>,
+        template: TemplateString<'t>,
+        context: &mut Context,
+    ) -> RenderResult<'t> {
+        let iterable = match self
+            .iterable
+            .resolve(py, template, context, ResolveFailures::Raise)?
+        {
+            Some(iterable) => iterable,
+            None => return self.empty.render(py, template, context),
+        };
+        match iterable {
+            Content::Py(iterable) => self.render_python(&iterable, py, template, context),
+            Content::String(s) => self.render_string(s.as_raw(), py, template, context),
+            Content::Float(_) | Content::Int(_) | Content::Bool(_) => {
+                unreachable!("float, int and bool literals are not iterable")
+            }
+        }
     }
 }

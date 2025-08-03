@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::iter::zip;
 
 use html_escape::encode_quoted_attribute;
 use num_bigint::{BigInt, ToBigInt};
@@ -10,18 +11,106 @@ use pyo3::types::{PyInt, PyString, PyType};
 
 use crate::utils::PyResultMethods;
 
+#[derive(Debug)]
+pub struct ForLoop {
+    count: usize,
+    len: usize,
+}
+
+impl ForLoop {
+    pub fn counter0(&self) -> usize {
+        self.count
+    }
+
+    pub fn counter(&self) -> usize {
+        self.count + 1
+    }
+
+    pub fn rev_counter(&self) -> usize {
+        self.len - self.count
+    }
+
+    pub fn rev_counter0(&self) -> usize {
+        self.len - self.count - 1
+    }
+
+    pub fn first(&self) -> bool {
+        self.count == 0
+    }
+
+    pub fn last(&self) -> bool {
+        self.count + 1 == self.len
+    }
+}
+
+#[derive(Debug)]
 pub struct Context {
     pub request: Option<Py<PyAny>>,
     pub context: HashMap<String, Py<PyAny>>,
     pub autoescape: bool,
+    pub loops: Vec<ForLoop>,
 }
 
 impl Context {
-    pub fn new(context: HashMap<String, Py<PyAny>>, request: Option<Py<PyAny>>, autoescape: bool) -> Self {
+    pub fn new(
+        context: HashMap<String, Py<PyAny>>,
+        request: Option<Py<PyAny>>,
+        autoescape: bool,
+    ) -> Self {
         Self {
             request,
             context,
             autoescape,
+            loops: Vec::new(),
+        }
+    }
+
+    pub fn push_variable(&mut self, name: String, value: Bound<'_, PyAny>) {
+        self.context.insert(name, value.unbind());
+    }
+
+    pub fn push_variables(
+        &mut self,
+        names: &Vec<String>,
+        values: Bound<'_, PyAny>,
+    ) -> Result<(), PyErr> {
+        if names.len() == 1 {
+            self.push_variable(names[0].clone(), values);
+        } else {
+            let values: Vec<_> = values.try_iter()?.collect();
+            if names.len() == values.len() {
+                for (name, value) in zip(names, values) {
+                    self.context.insert(name.clone(), value?.unbind());
+                }
+            } else {
+                todo!()
+            }
+        }
+        Ok(())
+    }
+
+    pub fn push_for_loop(&mut self, len: usize) {
+        self.loops.push(ForLoop { count: 0, len })
+    }
+
+    pub fn increment_for_loop(&mut self) {
+        let for_loop = self
+            .loops
+            .last_mut()
+            .expect("Called within an active for loop");
+        for_loop.count += 1
+    }
+
+    pub fn pop_for_loop(&mut self) {
+        self.loops
+            .pop()
+            .expect("Called when exiting an active for loop");
+    }
+
+    pub fn get_for_loop(&self, depth: usize) -> Option<&ForLoop> {
+        match self.loops.len().checked_sub(depth + 1) {
+            Some(index) => self.loops.get(index),
+            None => None,
         }
     }
 }
@@ -97,6 +186,7 @@ pub enum Content<'t, 'py> {
     String(ContentString<'t>),
     Float(f64),
     Int(BigInt),
+    Bool(bool),
 }
 
 impl<'t, 'py> Content<'t, 'py> {
@@ -106,6 +196,8 @@ impl<'t, 'py> Content<'t, 'py> {
             Self::String(content) => content.content(),
             Self::Float(content) => content.to_string().into(),
             Self::Int(content) => content.to_string().into(),
+            Self::Bool(true) => "True".into(),
+            Self::Bool(false) => "False".into(),
         })
     }
 
@@ -115,6 +207,7 @@ impl<'t, 'py> Content<'t, 'py> {
             Self::Float(content) => ContentString::String(content.to_string().into()),
             Self::Int(content) => ContentString::String(content.to_string().into()),
             Self::Py(content) => return resolve_python(content, context),
+            Self::Bool(_content) => todo!(),
         })
     }
 
@@ -136,6 +229,7 @@ impl<'t, 'py> Content<'t, 'py> {
                     }
                 }
             },
+            Self::Bool(_content) => todo!(),
         }
     }
 
@@ -168,6 +262,7 @@ impl<'t, 'py> Content<'t, 'py> {
                     mark_safe.call1((string,))?
                 }
             },
+            Self::Bool(_content) => todo!(),
         })
     }
 }

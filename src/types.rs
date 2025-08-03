@@ -102,3 +102,19 @@ pub struct Argument {
     pub at: (usize, usize),
     pub argument_type: ArgumentType,
 }
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum ForVariableName {
+    Counter,
+    Counter0,
+    RevCounter,
+    RevCounter0,
+    First,
+    Last,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ForVariable {
+    pub variant: ForVariableName,
+    pub parent_count: usize,
+}
