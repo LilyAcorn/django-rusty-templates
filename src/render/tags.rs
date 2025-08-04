@@ -746,7 +746,12 @@ impl For {
         }
         context.push_for_loop(list.len());
         for values in list {
-            context.push_variables(&self.variables, values?)?;
+            context.push_variables(
+                &self.variables.names,
+                self.variables.at,
+                values?,
+                self.iterable.at,
+            )?;
             parts.push(self.body.render(py, template, context)?);
             context.increment_for_loop();
         }
@@ -761,7 +766,7 @@ impl For {
         template: TemplateString<'t>,
         context: &mut Context,
     ) -> RenderResult<'t> {
-        if self.variables.len() > 1 {
+        if self.variables.names.len() > 1 {
             todo!()
         }
         let mut parts = Vec::new();
@@ -770,7 +775,7 @@ impl For {
             chars.reverse()
         }
 
-        let variable = &self.variables[0];
+        let variable = &self.variables.names[0];
         context.push_for_loop(chars.len());
         for c in chars {
             let c = PyString::new(py, &c.to_string());
@@ -790,13 +795,15 @@ impl Render for For {
         template: TemplateString<'t>,
         context: &mut Context,
     ) -> RenderResult<'t> {
-        let iterable = match self
-            .iterable
-            .resolve(py, template, context, ResolveFailures::Raise)?
-        {
-            Some(iterable) => iterable,
-            None => return self.empty.render(py, template, context),
-        };
+        let iterable =
+            match self
+                .iterable
+                .iterable
+                .resolve(py, template, context, ResolveFailures::Raise)?
+            {
+                Some(iterable) => iterable,
+                None => return self.empty.render(py, template, context),
+            };
         match iterable {
             Content::Py(iterable) => self.render_python(&iterable, py, template, context),
             Content::String(s) => self.render_string(s.as_raw(), py, template, context),

@@ -323,11 +323,23 @@ impl IfConditionOperator {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct ForIterable {
+    pub iterable: TagElement,
+    pub at: (usize, usize),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ForNames {
+    pub names: Vec<String>,
+    pub at: (usize, usize),
+}
+
 fn parse_for_loop(
     parser: &mut Parser,
     parts: TagParts,
     at: (usize, usize),
-) -> Result<(TagElement, Vec<String>, bool), ParseError> {
+) -> Result<(ForIterable, ForNames, bool), ParseError> {
     let mut lexer = ForLexer::new(parser.template, parts).peekable();
     let mut variable_names = Vec::new();
     while let Some(Ok(ForToken {
@@ -340,6 +352,11 @@ fn parse_for_loop(
     if variable_names.is_empty() {
         return Err(ForParseError::MissingVariableNames { at: at.into() }.into());
     }
+    let variables_start = variable_names[0].at.0;
+    let last = variable_names
+        .last()
+        .expect("Variables has at least one element");
+    let variables_at = (variables_start, last.at.0 - variables_start + last.at.1);
 
     match lexer.next().expect("A missing in is an Err") {
         Ok(ForToken {
@@ -414,6 +431,7 @@ fn parse_for_loop(
         .map(|token| parser.template.content(token.at).to_string())
         .collect();
     let expression_content = parser.template.content(expression.at);
+    let expression_at = expression.at;
     let expression = match expression.token_type {
         ForTokenType::Numeric => parse_numeric(expression_content, expression.at)?,
         ForTokenType::Text => TagElement::Text(Text::new(expression.at)),
@@ -423,13 +441,23 @@ fn parse_for_loop(
         }
         _ => unreachable!(),
     };
-    Ok((expression, variable_names, reversed))
+    Ok((
+        ForIterable {
+            iterable: expression,
+            at: expression_at,
+        },
+        ForNames {
+            names: variable_names,
+            at: variables_at,
+        },
+        reversed,
+    ))
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct For {
-    pub iterable: TagElement,
-    pub variables: Vec<String>,
+    pub iterable: ForIterable,
+    pub variables: ForNames,
     pub reversed: bool,
     pub body: Vec<TokenTree>,
     pub empty: Option<Vec<TokenTree>>,

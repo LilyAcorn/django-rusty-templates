@@ -9,6 +9,7 @@ use pyo3::intern;
 use pyo3::prelude::*;
 use pyo3::types::{PyInt, PyString, PyType};
 
+use crate::error::{PyRenderError, RenderError};
 use crate::utils::PyResultMethods;
 
 #[derive(Debug)]
@@ -72,8 +73,10 @@ impl Context {
     pub fn push_variables(
         &mut self,
         names: &Vec<String>,
+        names_at: (usize, usize),
         values: Bound<'_, PyAny>,
-    ) -> Result<(), PyErr> {
+        values_at: (usize, usize),
+    ) -> Result<(), PyRenderError> {
         if names.len() == 1 {
             self.push_variable(names[0].clone(), values);
         } else {
@@ -83,7 +86,13 @@ impl Context {
                     self.context.insert(name.clone(), value?.unbind());
                 }
             } else {
-                todo!()
+                return Err(RenderError::TupleUnpackError {
+                    expected_count: names.len(),
+                    actual_count: values.len(),
+                    expected_at: names_at.into(),
+                    actual_at: values_at.into(),
+                }
+                .into());
             }
         }
         Ok(())

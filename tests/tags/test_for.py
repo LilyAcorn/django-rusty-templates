@@ -498,3 +498,30 @@ def test_unexpected_expression_after_reversed():
    ╰────
 """
     assert str(exc_info.value) == expected
+
+
+def test_render_for_loop_unpack_tuple_mismatch():
+    template = "{% for x, y, z in l %}{{ x }}-{{ y }}-{{ z }}\n{% endfor %}"
+    django_template = engines["django"].from_string(template)
+    rust_template = engines["rusty"].from_string(template)
+
+    l = [(1, 2, 3), ("foo", "bar")]
+
+    with pytest.raises(ValueError) as exc_info:
+        django_template.render({"l": l})
+
+    assert str(exc_info.value) == "Need 3 values to unpack in for loop; got 2. "
+
+    with pytest.raises(ValueError) as exc_info:
+        rust_template.render({"l": l})
+
+    assert str(exc_info.value) == """\
+  × Need 3 values to unpack; got 2.
+   ╭─[1:8]
+ 1 │ {% for x, y, z in l %}{{ x }}-{{ y }}-{{ z }}
+   ·        ───┬───    ┬
+   ·           │       ╰── from here
+   ·           ╰── unpacked here
+ 2 │ {% endfor %}
+   ╰────
+"""
