@@ -753,6 +753,7 @@ pub struct Parser<'t, 'l, 'py> {
     libraries: &'l HashMap<String, Py<PyAny>>,
     external_tags: HashMap<String, Bound<'py, PyAny>>,
     external_filters: HashMap<String, Bound<'py, PyAny>>,
+    forloop_depth: usize,
 }
 
 impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
@@ -768,6 +769,7 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
             libraries,
             external_tags: HashMap::new(),
             external_filters: HashMap::new(),
+            forloop_depth: 0,
         }
     }
 
@@ -785,6 +787,7 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
             libraries,
             external_tags: HashMap::new(),
             external_filters,
+            forloop_depth: 0,
         }
     }
 
@@ -872,17 +875,23 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
 
     fn parse_for_variable(&self, at: (usize, usize)) -> TagElement {
         let mut parts = self.template.content(at).split('.');
-        if parts
-            .next()
-            .expect("a variable can always be split into at least one part")
-            .trim()
-            != "forloop"
+        if self.forloop_depth == 0
+            || parts
+                .next()
+                .expect("a variable can always be split into at least one part")
+                .trim()
+                != "forloop"
         {
             return TagElement::Variable(Variable::new(at));
         }
         let part = match parts.next_back() {
             Some(part) => part.trim(),
-            None => return TagElement::Variable(Variable::new(at)),
+            None => {
+                return TagElement::ForVariable(ForVariable {
+                    variant: ForVariableName::Object,
+                    parent_count: 0,
+                });
+            }
         };
         let variant = match part {
             "counter" => ForVariableName::Counter,
@@ -891,6 +900,7 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
             "revcounter0" => ForVariableName::RevCounter0,
             "first" => ForVariableName::First,
             "last" => ForVariableName::Last,
+            "parentloop" => ForVariableName::Object,
             _ => return TagElement::Variable(Variable::new(at)),
         };
         let parts: Vec<_> = parts.collect();
@@ -899,9 +909,16 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
                 return TagElement::Variable(Variable::new(at));
             }
         }
+        let mut parent_count = parts.len();
+        if variant == ForVariableName::Object {
+            parent_count += 1;
+        }
+        if parent_count > self.forloop_depth {
+            return TagElement::Variable(Variable::new(at));
+        }
         TagElement::ForVariable(ForVariable {
             variant,
-            parent_count: parts.len(),
+            parent_count,
         })
     }
 
@@ -1168,9 +1185,11 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
         at: (usize, usize),
         parts: TagParts,
     ) -> Result<TokenTree, PyParseError> {
+        self.forloop_depth += 1;
         let (iterable, variables, reversed) = parse_for_loop(self, parts, at)?;
         let (nodes, end_tag) =
             self.parse_until(vec![EndTagType::Empty, EndTagType::EndFor], "for", at)?;
+        self.forloop_depth -= 1;
         let empty = match end_tag {
             EndTag {
                 at,

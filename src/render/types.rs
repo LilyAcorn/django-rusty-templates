@@ -7,7 +7,7 @@ use num_bigint::{BigInt, ToBigInt};
 use pyo3::exceptions::PyAttributeError;
 use pyo3::intern;
 use pyo3::prelude::*;
-use pyo3::types::{PyInt, PyString, PyType};
+use pyo3::types::{PyDict, PyInt, PyString, PyType};
 
 use crate::error::{PyRenderError, RenderError};
 use crate::utils::PyResultMethods;
@@ -117,10 +117,35 @@ impl Context {
     }
 
     pub fn get_for_loop(&self, depth: usize) -> Option<&ForLoop> {
-        match self.loops.len().checked_sub(depth + 1) {
-            Some(index) => self.loops.get(index),
-            None => None,
+        let index = self.loops.len().checked_sub(depth + 1)?;
+        self.loops.get(index)
+    }
+
+    pub fn render_for_loop(&self, py: Python<'_>, depth: usize) -> String {
+        let mut forloop_dict = PyDict::new(py);
+        for forloop in self.loops.iter().rev().take(self.loops.len() - depth) {
+            let dict = PyDict::new(py);
+            dict.set_item("parentloop", forloop_dict)
+                .expect("Can always set a str: dict key/value");
+            dict.set_item("counter0", forloop.counter0())
+                .expect("Can always set a str: int key/value");
+            dict.set_item("counter", forloop.counter())
+                .expect("Can always set a str: int key/value");
+            dict.set_item("revcounter", forloop.rev_counter())
+                .expect("Can always set a str: int key/value");
+            dict.set_item("revcounter0", forloop.rev_counter0())
+                .expect("Can always set a str: int key/value");
+            dict.set_item("first", forloop.first())
+                .expect("Can always set a str: bool key/value");
+            dict.set_item("last", forloop.last())
+                .expect("Can always set a str: bool key/value");
+            forloop_dict = dict;
         }
+
+        let forloop_str = forloop_dict
+            .str()
+            .expect("All elements of the dictionary can be converted to a string");
+        forloop_str.to_string()
     }
 }
 

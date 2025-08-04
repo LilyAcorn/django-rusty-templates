@@ -101,14 +101,17 @@ impl Resolve for Variable {
 impl Resolve for ForVariable {
     fn resolve<'t, 'py>(
         &self,
-        _py: Python<'py>,
+        py: Python<'py>,
         _template: TemplateString<'t>,
         context: &mut Context,
         _failures: ResolveFailures,
     ) -> ResolveResult<'t, 'py> {
         let for_loop = match context.get_for_loop(self.parent_count) {
             Some(for_loop) => for_loop,
-            None => return Ok(None),
+            None => {
+                let content = Cow::Borrowed("{}");
+                return Ok(Some(Content::String(ContentString::String(content))));
+            }
         };
         Ok(Some(match self.variant {
             ForVariableName::Counter => Content::Int(for_loop.counter().into()),
@@ -117,6 +120,14 @@ impl Resolve for ForVariable {
             ForVariableName::RevCounter0 => Content::Int(for_loop.rev_counter0().into()),
             ForVariableName::First => Content::Bool(for_loop.first()),
             ForVariableName::Last => Content::Bool(for_loop.last()),
+            ForVariableName::Object => {
+                let content = Cow::Owned(context.render_for_loop(py, self.parent_count));
+                let content = match context.autoescape {
+                    false => ContentString::String(content),
+                    true => ContentString::HtmlUnsafe(content),
+                };
+                Content::String(content)
+            }
         }))
     }
 }

@@ -111,6 +111,7 @@ pub enum ForVariableName {
     RevCounter0,
     First,
     Last,
+    Object,
 }
 
 #[derive(Clone, Debug, PartialEq)]

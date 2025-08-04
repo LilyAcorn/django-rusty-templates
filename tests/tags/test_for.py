@@ -148,6 +148,106 @@ def test_render_for_loop_last():
     assert rust_template.render({"y": y}) == expected
 
 
+def test_render_for_loop_forloop_variable():
+    template = "{% autoescape off %}{% for x in y %}{{ forloop }}{% endfor %}{% endautoescape off %}"
+    django_template = engines["django"].from_string(template)
+    rust_template = engines["rusty"].from_string(template)
+
+    y = ["foo"]
+    expected = "{'parentloop': {}, 'counter0': 0, 'counter': 1, 'revcounter': 1, 'revcounter0': 0, 'first': True, 'last': True}"
+    assert django_template.render({"y": y}) == expected
+    assert rust_template.render({"y": y}) == expected
+
+
+def test_render_for_loop_forloop_variable_escaped():
+    template = "{% autoescape on %}{% for x in y %}{{ forloop }}{% endfor %}{% endautoescape on %}"
+    django_template = engines["django"].from_string(template)
+    rust_template = engines["rusty"].from_string(template)
+
+    y = ["foo"]
+    expected = "{'parentloop': {}, 'counter0': 0, 'counter': 1, 'revcounter': 1, 'revcounter0': 0, 'first': True, 'last': True}".replace(
+        "'", "&#x27;"
+    )
+    assert django_template.render({"y": y}) == expected
+    assert rust_template.render({"y": y}) == expected
+
+
+def test_render_for_loop_forloop_variable_nested():
+    template = "{% autoescape off %}{% for x in y %}{% for x in y %}{{ forloop }}{% endfor %}{% endfor %}{% endautoescape off %}"
+    django_template = engines["django"].from_string(template)
+    rust_template = engines["rusty"].from_string(template)
+
+    y = ["foo"]
+    expected = "{'parentloop': {'parentloop': {}, 'counter0': 0, 'counter': 1, 'revcounter': 1, 'revcounter0': 0, 'first': True, 'last': True}, 'counter0': 0, 'counter': 1, 'revcounter': 1, 'revcounter0': 0, 'first': True, 'last': True}"
+    assert django_template.render({"y": y}) == expected
+    assert rust_template.render({"y": y}) == expected
+
+
+def test_render_for_loop_parentloop_variable():
+    template = "{% autoescape off %}{% for x in y %}{% for x2 in y %}{{ forloop.parentloop }}{% endfor %}{% endfor %}{% endautoescape off %}"
+    django_template = engines["django"].from_string(template)
+    rust_template = engines["rusty"].from_string(template)
+
+    y = ["foo"]
+    expected = "{'parentloop': {}, 'counter0': 0, 'counter': 1, 'revcounter': 1, 'revcounter0': 0, 'first': True, 'last': True}"
+    assert django_template.render({"y": y}) == expected
+    assert rust_template.render({"y": y}) == expected
+
+
+def test_render_for_loop_forloop_variable_no_loop():
+    template = "{% autoescape off %}{{ forloop }}{% endautoescape off %}"
+    django_template = engines["django"].from_string(template)
+    rust_template = engines["rusty"].from_string(template)
+
+    expected = "foo"
+    assert django_template.render({"forloop": "foo"}) == expected
+    assert rust_template.render({"forloop": "foo"}) == expected
+
+
+def test_render_for_loop_parentloop_variable_no_inner_loop():
+    template = "{% autoescape off %}{% for x in y %}{{ forloop.parentloop }}{% endfor %}{% endautoescape off %}"
+    django_template = engines["django"].from_string(template)
+    rust_template = engines["rusty"].from_string(template)
+
+    y = ["foo"]
+    expected = "{}"
+    assert django_template.render({"y": y}) == expected
+    assert rust_template.render({"y": y}) == expected
+
+
+def test_render_for_loop_parentloop_variable_no_inner_loop_twice():
+    template = "{% autoescape off %}{% for x in y %}{{ forloop.parentloop.parentloop }}{% endfor %}{% endautoescape off %}"
+    django_template = engines["django"].from_string(template)
+    rust_template = engines["rusty"].from_string(template)
+
+    y = ["foo"]
+    expected = ""
+    assert django_template.render({"y": y}) == expected
+    assert rust_template.render({"y": y}) == expected
+
+
+def test_render_for_loop_invalid_forloop_variable():
+    template = "{% autoescape off %}{% for x in y %}{{ forloop.invalid }}{% endfor %}{% endautoescape off %}"
+    django_template = engines["django"].from_string(template)
+    rust_template = engines["rusty"].from_string(template)
+
+    y = ["foo"]
+    expected = ""
+    assert django_template.render({"y": y}) == expected
+    assert rust_template.render({"y": y}) == expected
+
+
+def test_render_for_loop_invalid_parentloop_variable():
+    template = "{% autoescape off %}{% for x in y %}{{ forloop.invalid.parentloop }}{% endfor %}{% endautoescape off %}"
+    django_template = engines["django"].from_string(template)
+    rust_template = engines["rusty"].from_string(template)
+
+    y = ["foo"]
+    expected = ""
+    assert django_template.render({"y": y}) == expected
+    assert rust_template.render({"y": y}) == expected
+
+
 def test_render_for_loop_parentloop():
     template = """
     {% for x in xs %}
@@ -515,7 +615,7 @@ def test_render_for_loop_unpack_tuple_mismatch():
     with pytest.raises(ValueError) as exc_info:
         rust_template.render({"l": l})
 
-    assert str(exc_info.value) == """\
+    expected = """\
   × Need 3 values to unpack; got 2.
    ╭─[1:8]
  1 │ {% for x, y, z in l %}{{ x }}-{{ y }}-{{ z }}
@@ -525,3 +625,4 @@ def test_render_for_loop_unpack_tuple_mismatch():
  2 │ {% endfor %}
    ╰────
 """
+    assert str(exc_info.value) == expected
