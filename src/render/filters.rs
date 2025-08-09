@@ -2,13 +2,15 @@ use std::borrow::Cow;
 use std::sync::LazyLock;
 
 use html_escape::encode_quoted_attribute_to_string;
+use pyo3::exceptions::PyIndexError;
 use pyo3::prelude::*;
 use pyo3::sync::GILOnceCell;
 use pyo3::types::PyType;
 
+use crate::error::RenderError;
 use crate::filters::{
     AddFilter, AddSlashesFilter, CapfirstFilter, DefaultFilter, EscapeFilter, ExternalFilter,
-    FilterType, LowerFilter, SafeFilter, SlugifyFilter, UpperFilter,
+    FilterType, FirstFilter, LowerFilter, SafeFilter, SlugifyFilter, UpperFilter,
 };
 use crate::parse::Filter;
 use crate::render::types::{Content, ContentString, Context};
@@ -69,6 +71,7 @@ impl Resolve for Filter {
             FilterType::Default(filter) => filter.resolve(left, py, template, context),
             FilterType::Escape(filter) => filter.resolve(left, py, template, context),
             FilterType::External(filter) => filter.resolve(left, py, template, context),
+            FilterType::First(filter) => filter.resolve(left, py, template, context),
             FilterType::Lower(filter) => filter.resolve(left, py, template, context),
             FilterType::Safe(filter) => filter.resolve(left, py, template, context),
             FilterType::Slugify(filter) => filter.resolve(left, py, template, context),
@@ -231,6 +234,62 @@ impl ResolveFilter for ExternalFilter {
             None => filter.call1((variable,))?,
         };
         Ok(Some(Content::Py(value)))
+    }
+}
+
+impl ResolveFilter for FirstFilter {
+    fn resolve<'t, 'py>(
+        &self,
+        variable: Option<Content<'t, 'py>>,
+        py: Python<'py>,
+        _template: TemplateString<'t>,
+        _context: &mut Context,
+    ) -> ResolveResult<'t, 'py> {
+        use self::IntoOwnedContent;
+        let content = match variable {
+            Some(content) => content,
+            None => return Ok("".as_content()),
+        };
+
+        match content {
+            Content::Py(obj) => {
+                // Try to get the first item using Python's indexing
+                // Django only catches IndexError, not TypeError
+                match obj.get_item(0) {
+                    Ok(first) => Ok(Some(Content::Py(first))),
+                    Err(e) if e.is_instance_of::<PyIndexError>(py) => Ok("".as_content()),
+                    Err(e) => Err(e.into()),
+                }
+            }
+            Content::String(s) => {
+                // For strings, get the first character
+                let s_raw = s.as_raw();
+                // Skip the empty string always present at the start after splitting
+                let mut chars = s_raw.split("").skip(1);
+                match chars.next() {
+                    None => Ok("".as_content()),
+                    Some(c) => Ok(c.to_string().into_content()),
+                }
+            }
+            Content::Int(_) => {
+                // Numbers are not sequences, should raise TypeError
+                // Match Django's behavior exactly
+                Err(RenderError::NotSubscriptable {
+                    type_name: "int".to_string(),
+                    at: (0, 0).into(),
+                }
+                .into())
+            }
+            Content::Float(_) => {
+                // Floats are not sequences, should raise TypeError
+                // Match Django's behavior exactly
+                Err(RenderError::NotSubscriptable {
+                    type_name: "float".to_string(),
+                    at: (0, 0).into(),
+                }
+                .into())
+            }
+        }
     }
 }
 
@@ -827,6 +886,86 @@ mod tests {
 
             let rendered = filter.render(py, template, &mut context).unwrap();
             assert_eq!(rendered, "");
+        })
+    }
+
+    #[test]
+    fn test_render_filter_first_list() {
+        pyo3::prepare_freethreaded_python();
+
+        Python::with_gil(|py| {
+            let engine = EngineData::empty();
+            let template_string = "{{ items|first }}".to_string();
+            let context = PyDict::new(py);
+            let items = vec!["a", "b", "c"];
+            context.set_item("items", items).unwrap();
+            let template = Template::new_from_string(py, template_string, &engine).unwrap();
+            let result = template.render(py, Some(context), None).unwrap();
+
+            assert_eq!(result, "a");
+        })
+    }
+
+    #[test]
+    fn test_render_filter_first_empty_list() {
+        pyo3::prepare_freethreaded_python();
+
+        Python::with_gil(|py| {
+            let engine = EngineData::empty();
+            let template_string = "{{ items|first }}".to_string();
+            let context = PyDict::new(py);
+            let items: Vec<&str> = vec![];
+            context.set_item("items", items).unwrap();
+            let template = Template::new_from_string(py, template_string, &engine).unwrap();
+            let result = template.render(py, Some(context), None).unwrap();
+
+            assert_eq!(result, "");
+        })
+    }
+
+    #[test]
+    fn test_render_filter_first_string() {
+        pyo3::prepare_freethreaded_python();
+
+        Python::with_gil(|py| {
+            let engine = EngineData::empty();
+            let template_string = "{{ text|first }}".to_string();
+            let context = PyDict::new(py);
+            context.set_item("text", "hello").unwrap();
+            let template = Template::new_from_string(py, template_string, &engine).unwrap();
+            let result = template.render(py, Some(context), None).unwrap();
+
+            assert_eq!(result, "h");
+        })
+    }
+
+    #[test]
+    fn test_render_filter_first_empty_string() {
+        pyo3::prepare_freethreaded_python();
+
+        Python::with_gil(|py| {
+            let engine = EngineData::empty();
+            let template_string = "{{ text|first }}".to_string();
+            let context = PyDict::new(py);
+            context.set_item("text", "").unwrap();
+            let template = Template::new_from_string(py, template_string, &engine).unwrap();
+            let result = template.render(py, Some(context), None).unwrap();
+
+            assert_eq!(result, "");
+        })
+    }
+
+    #[test]
+    fn test_render_filter_first_no_argument() {
+        pyo3::prepare_freethreaded_python();
+
+        Python::with_gil(|py| {
+            let engine = EngineData::empty();
+            let template_string = "{{ items|first:'arg' }}".to_string();
+            let error = Template::new_from_string(py, template_string, &engine).unwrap_err();
+
+            let error_string = format!("{error}");
+            assert!(error_string.contains("first filter does not take an argument"));
         })
     }
 }
