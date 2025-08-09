@@ -6,12 +6,13 @@ pub mod django_rusty_templates {
     use std::path::PathBuf;
 
     use encoding_rs::Encoding;
-    use pyo3::exceptions::{PyAttributeError, PyImportError};
+    use pyo3::exceptions::{PyAttributeError, PyImportError, PyValueError};
     use pyo3::import_exception_bound;
     use pyo3::intern;
     use pyo3::prelude::*;
     use pyo3::types::{PyBool, PyDict, PyString};
 
+    use crate::error::RenderError;
     use crate::loaders::{AppDirsLoader, CachedLoader, FileSystemLoader, Loader};
     use crate::parse::{Parser, TokenTree};
     use crate::render::Render;
@@ -53,6 +54,16 @@ pub mod django_rusty_templates {
             // Work around old-style Python formatting in VariableDoesNotExist.__str__
             let report = report.replace("%", "%%");
             Self::new_err(report)
+        }
+    }
+
+    impl WithSourceCode for PyValueError {
+        fn with_source_code(
+            err: miette::Report,
+            source: impl miette::SourceCode + 'static,
+        ) -> PyErr {
+            let miette_err = err.with_source_code(source);
+            Self::new_err(format!("{miette_err:?}"))
         }
     }
 
@@ -293,10 +304,21 @@ pub mod django_rusty_templates {
                     Ok(content) => rendered.push_str(&content),
                     Err(err) => {
                         let err = err.try_into_render_error()?;
-                        return Err(VariableDoesNotExist::with_source_code(
-                            err.into(),
-                            self.template.clone(),
-                        ));
+                        match err {
+                            RenderError::VariableDoesNotExist { .. }
+                            | RenderError::ArgumentDoesNotExist { .. } => {
+                                return Err(VariableDoesNotExist::with_source_code(
+                                    err.into(),
+                                    self.template.clone(),
+                                ));
+                            }
+                            RenderError::InvalidArgumentInteger { .. } => {
+                                return Err(PyValueError::with_source_code(
+                                    err.into(),
+                                    self.template.clone(),
+                                ));
+                            }
+                        }
                     }
                 }
             }
