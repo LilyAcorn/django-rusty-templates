@@ -6,12 +6,14 @@ pub mod django_rusty_templates {
     use std::path::PathBuf;
 
     use encoding_rs::Encoding;
-    use pyo3::exceptions::{PyAttributeError, PyImportError};
+    use miette::SourceSpan;
+    use pyo3::exceptions::{PyAttributeError, PyImportError, PyTypeError, PyValueError};
     use pyo3::import_exception_bound;
     use pyo3::intern;
     use pyo3::prelude::*;
     use pyo3::types::{PyBool, PyDict, PyString};
 
+    use crate::error::RenderError;
     use crate::loaders::{AppDirsLoader, CachedLoader, FileSystemLoader, Loader};
     use crate::parse::{Parser, TokenTree};
     use crate::render::Render;
@@ -49,6 +51,19 @@ pub mod django_rusty_templates {
         }
     }
 
+    #[derive(Debug)]
+    struct InvalidArgumentInteger {
+        argument: String,
+        argument_at: SourceSpan,
+    }
+
+    impl From<InvalidArgumentInteger> for PyErr {
+        fn from(err: InvalidArgumentInteger) -> PyErr {
+            PyValueError::new_err(format!(
+                "Couldn't convert argument ({argument}) to integer",
+                argument = err.argument))
+        }
+    }
     pub struct EngineData {
         autoescape: bool,
         libraries: HashMap<String, Py<PyAny>>,
@@ -286,10 +301,18 @@ pub mod django_rusty_templates {
                     Ok(content) => rendered.push_str(&content),
                     Err(err) => {
                         let err = err.try_into_render_error()?;
-                        return Err(VariableDoesNotExist::with_source_code(
-                            err.into(),
-                            self.template.clone(),
-                        ));
+                        match err {
+                            RenderError::VariableDoesNotExist {ref key, ref object, key_at, object_at} |
+                            RenderError::ArgumentDoesNotExist {ref key, ref object, key_at, object_at} => {
+                                return Err(VariableDoesNotExist::with_source_code(
+                                    err.into(),
+                                    self.template.clone(),
+                                ))
+                            },
+                            RenderError::InvalidArgumentInteger {argument, argument_at} => {
+                                return Err(InvalidArgumentInteger {argument: argument, argument_at: argument_at}.into())
+                            },
+                        }
                     }
                 }
             }

@@ -11,6 +11,7 @@ use thiserror::Error;
 use crate::filters::AddFilter;
 use crate::filters::AddSlashesFilter;
 use crate::filters::CapfirstFilter;
+use crate::filters::CenterFilter;
 use crate::filters::DefaultFilter;
 use crate::filters::EscapeFilter;
 use crate::filters::ExternalFilter;
@@ -105,6 +106,10 @@ impl Filter {
             "capfirst" => match right {
                 Some(right) => return Err(unexpected_argument("capfirst", right)),
                 None => FilterType::Capfirst(CapfirstFilter),
+            },
+            "center" => match right {
+                Some(right) => FilterType::Center(CenterFilter::new(right)),
+                None => return Err(ParseError::MissingArgument { at: at.into() }),
             },
             "default" => match right {
                 Some(right) => FilterType::Default(DefaultFilter::new(right)),

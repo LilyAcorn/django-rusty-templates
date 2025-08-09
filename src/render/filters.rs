@@ -1,13 +1,17 @@
 use std::borrow::Cow;
 use std::sync::LazyLock;
 
+use num_bigint::Sign;
+
 use html_escape::encode_quoted_attribute_to_string;
+use num_traits::ToPrimitive;
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::sync::GILOnceCell;
-use pyo3::types::PyType;
+use pyo3::types::{PyInt, PyType};
 
 use crate::filters::{
-    AddFilter, AddSlashesFilter, CapfirstFilter, DefaultFilter, EscapeFilter, ExternalFilter,
+    AddFilter, AddSlashesFilter, CapfirstFilter, CenterFilter, DefaultFilter, EscapeFilter, ExternalFilter,
     FilterType, LowerFilter, SafeFilter, SlugifyFilter, UpperFilter,
 };
 use crate::parse::Filter;
@@ -16,6 +20,7 @@ use crate::render::{Resolve, ResolveFailures, ResolveResult};
 use crate::types::TemplateString;
 use regex::Regex;
 use unicode_normalization::UnicodeNormalization;
+use crate::error::{PyRenderError, RenderError};
 
 // Used for replacing all non-word and non-spaces with an empty string
 static NON_WORD_RE: LazyLock<Regex> =
@@ -66,6 +71,7 @@ impl Resolve for Filter {
             FilterType::Add(filter) => filter.resolve(left, py, template, context),
             FilterType::AddSlashes(filter) => filter.resolve(left, py, template, context),
             FilterType::Capfirst(filter) => filter.resolve(left, py, template, context),
+            FilterType::Center(filter) => filter.resolve(left, py, template, context),
             FilterType::Default(filter) => filter.resolve(left, py, template, context),
             FilterType::Escape(filter) => filter.resolve(left, py, template, context),
             FilterType::External(filter) => filter.resolve(left, py, template, context),
@@ -160,6 +166,117 @@ impl ResolveFilter for CapfirstFilter {
             None => "".as_content(),
         };
         Ok(content)
+    }
+}
+
+impl ResolveFilter for CenterFilter {
+    fn resolve<'t, 'py>(
+        &self,
+        variable: Option<Content<'t, 'py>>,
+        py: Python<'py>,
+        template: TemplateString<'t>,
+        context: &mut Context,
+    ) -> ResolveResult<'t, 'py> {
+        let left: usize;
+        let right: usize;
+        let content = match variable {
+            Some(content) => content.render(context)?,
+            None => return Ok("".as_content()),
+        };
+        let arg = self
+            .argument
+            .resolve(py, template, context, ResolveFailures::Raise)?
+            .expect("missing argument in context should already have raised");
+
+        let arg_size = match arg {
+            Content::Int(left) => {
+                match left.sign() {
+                    Sign::Minus | Sign::NoSign => Ok(0),
+                    Sign::Plus => {
+                        let result = left.to_usize();
+                        match result {
+                            Some(res) => Ok(res),
+                            None => return Err(PyRenderError::PyErr(PyValueError::new_err("integer is too big")))
+                        }
+                    },
+                }
+            },
+            Content::String(left) => {
+                match left.as_raw().parse::<i64>() {
+                    Ok(left) => {
+                        if left <= 0 {
+                            return Ok(Some(Content::String(ContentString::String(content))));
+                        }
+                        match left.to_usize() {
+                            Some(left) => Ok(left),
+                            None => {
+                                return Err(RenderError::InvalidArgumentInteger {
+                                    argument: left.to_string(),
+                                    argument_at: self.argument.at.into()
+                                }.into())
+                            }
+                        }
+                    },
+                    Err(_) => {
+                        return Err(RenderError::InvalidArgumentInteger {
+                            argument: left.as_raw().to_string(),
+                            argument_at: self.argument.at.into()
+                        }.into())
+                    },
+                }
+            },
+            Content::Float(left) => {
+                let result = left.trunc();
+                if result <= 0f64 {
+                    return Ok(Some(Content::String(ContentString::String(content))));
+                }
+                if result.is_infinite() {
+                    return Err(RenderError::InvalidArgumentInteger {
+                        argument: left.to_string(),
+                        argument_at: self.argument.at.into()
+                    }.into())
+                }
+                match left.to_usize() {
+                    Some(left) => Ok(left),
+                    None => Err(PyRenderError::PyErr(PyValueError::new_err("float is NaN")))
+                }
+            },
+            Content::Py(left) => match left.extract::<usize>() {
+                Ok(left) => Ok(left),
+                Err(_) => {
+                    let int = PyType::new::<PyInt>(left.py());
+                    match int.call1((left.clone(),)) {
+                        Ok(left) => Ok(left.extract::<usize>()?),
+                        Err(_) => {
+                            Err(RenderError::InvalidArgumentInteger {
+                                argument: left.to_string(),
+                                argument_at: self.argument.at.into()
+                            }.into())
+                        },
+                    }
+                }
+            },
+        };
+        let size = arg_size?;
+
+        if size <= content.len() {
+            return Ok(Some(Content::String(ContentString::String(content))));
+        }
+        if size % 2 == 0 && content.len() % 2 != 0 {
+            // If the size is even and the content length is odd, we need to adjust the centering
+            right = (size - content.len() + 1) / 2;
+            left = size - content.len() - right;
+        } else {
+            right = (size - content.len()) / 2;
+            left = size - content.len() - right;
+        }
+        let mut centered = String::with_capacity(size);
+
+        centered.push_str(&" ".repeat(left));
+        centered.push_str(&content);
+        centered.push_str(&" ".repeat(right));
+
+        Ok(centered.into_content())
     }
 }
 
@@ -624,6 +741,86 @@ mod tests {
 
             let error_string = format!("{error}");
             assert!(error_string.contains("capfirst filter does not take an argument"));
+        })
+    }
+
+    #[test]
+    fn test_render_filter_center() {
+        pyo3::prepare_freethreaded_python();
+
+        Python::with_gil(|py| {
+            let engine = EngineData::empty();
+            let template_string = "{{ var|center:'11' }}".to_string();
+            let context = PyDict::new(py);
+            context.set_item("var", "hello").unwrap();
+            let template = Template::new_from_string(py, template_string, &engine).unwrap();
+            let result = template.render(py, Some(context), None).unwrap();
+
+            assert_eq!(result, "   hello   ");
+
+            let context = PyDict::new(py);
+            context.set_item("var", "django").unwrap();
+            let template_string = "{{ var|center:'15' }}".to_string();
+            let template = Template::new_from_string(py, template_string, &engine).unwrap();
+            let result = template.render(py, Some(context), None).unwrap();
+
+            assert_eq!(result, "     django    ");
+
+            let context = PyDict::new(py);
+            context.set_item("var", "django").unwrap();
+            let template_string = "{{ var|center:1 }}".to_string();
+            let template = Template::new_from_string(py, template_string, &engine).unwrap();
+            let result = template.render(py, Some(context), None).unwrap();
+
+            assert_eq!(result, "django");
+        })
+    }
+
+    #[test]
+    fn test_render_filter_center_no_argument_return_err() {
+        pyo3::prepare_freethreaded_python();
+
+        Python::with_gil(|py| {
+            let engine = EngineData::empty();
+            let template_string = "{{ var|center }}".to_string();
+            let context = PyDict::new(py);
+            context.set_item("var", "hello").unwrap();
+            let error = Template::new_from_string(py, template_string, &engine).unwrap_err();
+
+            let error_string = format!("{error}");
+
+            assert!(error_string.contains("Expected an argument"));
+        })
+    }
+
+    #[test]
+    fn test_render_filter_center_no_variable() {
+        pyo3::prepare_freethreaded_python();
+
+        Python::with_gil(|py| {
+            let engine = EngineData::empty();
+            let template_string = "{{ var|center:'11' }}".to_string();
+            let context = PyDict::new(py);
+            let template = Template::new_from_string(py, template_string, &engine).unwrap();
+            let result = template.render(py, Some(context), None).unwrap();
+
+            assert_eq!(result, "");
+        })
+    }
+
+    #[test]
+    fn test_render_filter_center_on_0() {
+        pyo3::prepare_freethreaded_python();
+
+        Python::with_gil(|py| {
+            let engine = EngineData::empty();
+            let template_string = "{{ var|center:0 }}".to_string();
+            let context = PyDict::new(py);
+            context.set_item("var", "hello").unwrap();
+            let template = Template::new_from_string(py, template_string, &engine).unwrap();
+            let result = template.render(py, Some(context), None).unwrap();
+
+            assert_eq!(result, "hello");
         })
     }
 
