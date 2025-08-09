@@ -23,6 +23,7 @@ use crate::lex::START_TAG_LEN;
 use crate::lex::autoescape::{AutoescapeEnabled, AutoescapeError, lex_autoescape_argument};
 use crate::lex::common::LexerError;
 use crate::lex::core::{Lexer, TokenType};
+use crate::lex::forloop::{ForLexer, ForLexerError, ForToken, ForTokenType};
 use crate::lex::ifcondition::{
     IfConditionAtom, IfConditionLexer, IfConditionOperator, IfConditionTokenType,
 };
@@ -35,6 +36,8 @@ use crate::lex::variable::{
 };
 use crate::types::Argument;
 use crate::types::ArgumentType;
+use crate::types::ForVariable;
+use crate::types::ForVariableName;
 use crate::types::TemplateString;
 use crate::types::Text;
 use crate::types::TranslatedText;
@@ -69,6 +72,7 @@ pub enum TagElement {
     Text(Text),
     TranslatedText(Text),
     Variable(Variable),
+    ForVariable(ForVariable),
     Filter(Box<Filter>),
 }
 
@@ -320,6 +324,146 @@ impl IfConditionOperator {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct ForIterable {
+    pub iterable: TagElement,
+    pub at: (usize, usize),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ForNames {
+    pub names: Vec<String>,
+    pub at: (usize, usize),
+}
+
+fn parse_for_loop(
+    parser: &mut Parser,
+    parts: TagParts,
+    at: (usize, usize),
+) -> Result<(ForIterable, ForNames, bool), ParseError> {
+    let mut lexer = ForLexer::new(parser.template, parts).peekable();
+    let mut variable_names = Vec::new();
+    while let Some(Ok(ForToken {
+        token_type: ForTokenType::VariableName,
+        ..
+    })) = lexer.peek()
+    {
+        variable_names.push(lexer.next().expect("Token is Some").expect("Token is Ok"))
+    }
+    if variable_names.is_empty() {
+        return Err(ForParseError::MissingVariableNames { at: at.into() }.into());
+    }
+    let variables_start = variable_names[0].at.0;
+    let last = variable_names
+        .last()
+        .expect("Variables has at least one element");
+    let variables_at = (variables_start, last.at.0 - variables_start + last.at.1);
+
+    match lexer.next().expect("A missing in is an Err") {
+        Ok(ForToken {
+            token_type: ForTokenType::In,
+            ..
+        }) => {}
+        Ok(_) => unreachable!(),
+        Err(ForLexerError::MissingIn { at }) => {
+            let name = variable_names
+                .last()
+                .expect("variable_names has one element");
+            if parser.template.content(name.at) == "in" {
+                return Err(ForParseError::MissingVariableBeforeIn { at: name.at.into() }.into());
+            }
+            return Err(ForLexerError::MissingIn { at }.into());
+        }
+        Err(ForLexerError::MissingComma { at }) => {
+            if variable_names.len() >= 2 {
+                let names = variable_names
+                    .last_chunk::<2>()
+                    .expect("variable_names has at least two elements");
+                if parser.template.content(names[1].at) == "in" {
+                    return Err(ForParseError::MissingVariable {
+                        at: names[0].at.into(),
+                    }
+                    .into());
+                }
+            } else {
+                let name = variable_names
+                    .last()
+                    .expect("variable_names has one element");
+                if parser.template.content(name.at) == "in" {
+                    return Err(
+                        ForParseError::MissingVariableBeforeIn { at: name.at.into() }.into(),
+                    );
+                }
+            }
+            return Err(ForLexerError::MissingComma { at }.into());
+        }
+        Err(e) => return Err(e.into()),
+    }
+
+    let expression = match lexer.next().expect("A missing expression is an Err") {
+        Ok(token) => token,
+        Err(ForLexerError::MissingIn { at }) => {
+            let name = variable_names
+                .last()
+                .expect("variable_names has one element");
+            if parser.template.content(name.at) == "in" {
+                return Err(ForParseError::MissingVariableBeforeIn { at: name.at.into() }.into());
+            }
+            return Err(ForLexerError::MissingIn { at }.into());
+        }
+        Err(e) => return Err(e.into()),
+    };
+    let reversed = match lexer.next() {
+        Some(Ok(ForToken {
+            token_type: ForTokenType::Reversed,
+            ..
+        })) => true,
+        Some(Ok(_)) => unreachable!(),
+        Some(Err(e)) => return Err(e.into()),
+        None => false,
+    };
+    match lexer.next() {
+        Some(Err(e)) => return Err(e.into()),
+        Some(Ok(_)) => unreachable!(),
+        None => {}
+    }
+    let variable_names = variable_names
+        .iter()
+        .map(|token| parser.template.content(token.at).to_string())
+        .collect();
+    let expression_content = parser.template.content(expression.at);
+    let expression_at = expression.at;
+    let expression = match expression.token_type {
+        ForTokenType::Numeric => parse_numeric(expression_content, expression.at)?,
+        ForTokenType::Text => TagElement::Text(Text::new(expression.at)),
+        ForTokenType::TranslatedText => TagElement::TranslatedText(Text::new(expression.at)),
+        ForTokenType::Variable => {
+            parser.parse_variable(expression_content, expression.at, expression.at.0)?
+        }
+        _ => unreachable!(),
+    };
+    Ok((
+        ForIterable {
+            iterable: expression,
+            at: expression_at,
+        },
+        ForNames {
+            names: variable_names,
+            at: variables_at,
+        },
+        reversed,
+    ))
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct For {
+    pub iterable: ForIterable,
+    pub variables: ForNames,
+    pub reversed: bool,
+    pub body: Vec<TokenTree>,
+    pub empty: Option<Vec<TokenTree>>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub enum Tag {
     Autoescape {
         enabled: AutoescapeEnabled,
@@ -330,6 +474,7 @@ pub enum Tag {
         truthy: Vec<TokenTree>,
         falsey: Option<Vec<TokenTree>>,
     },
+    For(For),
     Load,
     Url(Url),
 }
@@ -340,17 +485,21 @@ enum EndTagType {
     Elif,
     Else,
     EndIf,
+    Empty,
+    EndFor,
     Verbatim,
 }
 
 impl EndTagType {
     fn as_str(&self) -> &'static str {
         match self {
-            EndTagType::Autoescape => "endautoescape",
-            EndTagType::Elif => "elif",
-            EndTagType::Else => "else",
-            EndTagType::EndIf => "endif",
-            EndTagType::Verbatim => "endverbatim",
+            Self::Autoescape => "endautoescape",
+            Self::Elif => "elif",
+            Self::Else => "else",
+            Self::EndIf => "endif",
+            Self::Empty => "empty",
+            Self::EndFor => "endfor",
+            Self::Verbatim => "endverbatim",
         }
     }
 }
@@ -376,6 +525,7 @@ pub enum TokenTree {
     Float(f64),
     Tag(Tag),
     Variable(Variable),
+    ForVariable(ForVariable),
     Filter(Box<Filter>),
 }
 
@@ -385,11 +535,32 @@ impl From<TagElement> for TokenTree {
             TagElement::Text(text) => Self::Text(text),
             TagElement::TranslatedText(text) => Self::TranslatedText(text),
             TagElement::Variable(variable) => Self::Variable(variable),
+            TagElement::ForVariable(variable) => Self::ForVariable(variable),
             TagElement::Filter(filter) => Self::Filter(filter),
             TagElement::Int(n) => Self::Int(n),
             TagElement::Float(f) => Self::Float(f),
         }
     }
+}
+
+#[allow(clippy::enum_variant_names)]
+#[derive(Error, Debug, Diagnostic, PartialEq, Eq)]
+pub enum ForParseError {
+    #[error("Expected another variable when unpacking in for loop:")]
+    MissingVariable {
+        #[label("after this variable")]
+        at: SourceSpan,
+    },
+    #[error("Expected a variable name before the 'in' keyword:")]
+    MissingVariableBeforeIn {
+        #[label("before this keyword")]
+        at: SourceSpan,
+    },
+    #[error("Expected at least one variable name in for loop:")]
+    MissingVariableNames {
+        #[label("in this tag")]
+        at: SourceSpan,
+    },
 }
 
 #[derive(Error, Debug, Diagnostic, PartialEq, Eq)]
@@ -418,6 +589,13 @@ pub enum ParseError {
     #[error(transparent)]
     #[diagnostic(transparent)]
     LexerError(#[from] LexerError),
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    ForLexerError(#[from] ForLexerError),
+    #[allow(clippy::enum_variant_names)]
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    ForParseError(#[from] ForParseError),
     #[error(transparent)]
     #[diagnostic(transparent)]
     UrlLexerError(#[from] UrlLexerError),
@@ -575,6 +753,7 @@ pub struct Parser<'t, 'l, 'py> {
     libraries: &'l HashMap<String, Py<PyAny>>,
     external_tags: HashMap<String, Bound<'py, PyAny>>,
     external_filters: HashMap<String, Bound<'py, PyAny>>,
+    forloop_depth: usize,
 }
 
 impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
@@ -590,6 +769,7 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
             libraries,
             external_tags: HashMap::new(),
             external_filters: HashMap::new(),
+            forloop_depth: 0,
         }
     }
 
@@ -607,6 +787,7 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
             libraries,
             external_tags: HashMap::new(),
             external_filters,
+            forloop_depth: 0,
         }
     }
 
@@ -692,6 +873,55 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
         .into())
     }
 
+    fn parse_for_variable(&self, at: (usize, usize)) -> TagElement {
+        let mut parts = self.template.content(at).split('.');
+        if self.forloop_depth == 0
+            || parts
+                .next()
+                .expect("a variable can always be split into at least one part")
+                .trim()
+                != "forloop"
+        {
+            return TagElement::Variable(Variable::new(at));
+        }
+        let part = match parts.next_back() {
+            Some(part) => part.trim(),
+            None => {
+                return TagElement::ForVariable(ForVariable {
+                    variant: ForVariableName::Object,
+                    parent_count: 0,
+                });
+            }
+        };
+        let variant = match part {
+            "counter" => ForVariableName::Counter,
+            "counter0" => ForVariableName::Counter0,
+            "revcounter" => ForVariableName::RevCounter,
+            "revcounter0" => ForVariableName::RevCounter0,
+            "first" => ForVariableName::First,
+            "last" => ForVariableName::Last,
+            "parentloop" => ForVariableName::Object,
+            _ => return TagElement::Variable(Variable::new(at)),
+        };
+        let parts: Vec<_> = parts.collect();
+        for part in &parts {
+            if part.trim() != "parentloop" {
+                return TagElement::Variable(Variable::new(at));
+            }
+        }
+        let mut parent_count = parts.len();
+        if variant == ForVariableName::Object {
+            parent_count += 1;
+        }
+        if parent_count > self.forloop_depth {
+            return TagElement::Variable(Variable::new(at));
+        }
+        TagElement::ForVariable(ForVariable {
+            variant,
+            parent_count,
+        })
+    }
+
     fn parse_variable(
         &self,
         variable: &str,
@@ -703,7 +933,7 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
             Some(t) => t,
         };
         let mut var = match variable_token.token_type {
-            VariableTokenType::Variable => TagElement::Variable(Variable::new(variable_token.at)),
+            VariableTokenType::Variable => self.parse_for_variable(variable_token.at),
             VariableTokenType::Int(n) => TagElement::Int(n),
             VariableTokenType::Float(f) => TagElement::Float(f),
         };
@@ -765,7 +995,18 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
                 at,
                 parts,
             }),
-            _ => todo!(),
+            "for" => Either::Left(self.parse_for(at, parts)?),
+            "empty" => Either::Right(EndTag {
+                end: EndTagType::Empty,
+                at,
+                parts,
+            }),
+            "endfor" => Either::Right(EndTag {
+                end: EndTagType::EndFor,
+                at,
+                parts,
+            }),
+            tag_name => todo!("{tag_name}"),
         })
     }
 
@@ -937,6 +1178,41 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
             truthy: nodes,
             falsey,
         }))
+    }
+
+    fn parse_for(
+        &mut self,
+        at: (usize, usize),
+        parts: TagParts,
+    ) -> Result<TokenTree, PyParseError> {
+        self.forloop_depth += 1;
+        let (iterable, variables, reversed) = parse_for_loop(self, parts, at)?;
+        let (nodes, end_tag) =
+            self.parse_until(vec![EndTagType::Empty, EndTagType::EndFor], "for", at)?;
+        self.forloop_depth -= 1;
+        let empty = match end_tag {
+            EndTag {
+                at,
+                end: EndTagType::Empty,
+                parts: _parts,
+            } => {
+                let (nodes, _) = self.parse_until(vec![EndTagType::EndFor], "empty", at)?;
+                Some(nodes)
+            }
+            EndTag {
+                at: _end_at,
+                end: EndTagType::EndFor,
+                parts: _parts,
+            } => None,
+            _ => unreachable!(),
+        };
+        Ok(TokenTree::Tag(Tag::For(For {
+            iterable,
+            variables,
+            reversed,
+            body: nodes,
+            empty,
+        })))
     }
 }
 

@@ -30,6 +30,15 @@ pub enum RenderError {
         #[label("{object}")]
         object_at: Option<SourceSpan>,
     },
+    #[error("Need {expected_count} values to unpack; got {actual_count}.")]
+    TupleUnpackError {
+        expected_count: usize,
+        actual_count: usize,
+        #[label("unpacked here")]
+        expected_at: SourceSpan,
+        #[label("from here")]
+        actual_at: SourceSpan,
+    },
     #[error("Failed lookup for key [{key}] in {object}")]
     VariableDoesNotExist {
         key: String,
