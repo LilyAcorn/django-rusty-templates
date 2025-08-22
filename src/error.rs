@@ -68,6 +68,12 @@ pub enum RenderError {
         #[label("{object}")]
         object_at: Option<SourceSpan>,
     },
+    #[error("'{type_name}' object is not subscriptable")]
+    NotSubscriptable {
+        type_name: String,
+        #[label("filter applied here")]
+        at: SourceSpan,
+    },
 }
 
 pub trait AnnotatePyErr {
