@@ -432,7 +432,7 @@ pub struct SimpleTag {
     pub at: (usize, usize),
     pub takes_context: bool,
     pub args: Vec<TagElement>,
-    pub kwargs: HashMap<String, TagElement>,
+    pub kwargs: Vec<(String, TagElement)>,
     pub target_var: Option<String>,
 }
 
@@ -671,6 +671,23 @@ pub enum ParseError {
     },
     #[error("'url' view name must be a string or variable, not a number")]
     NumericUrlName {
+        #[label("here")]
+        at: SourceSpan,
+    },
+    #[error("Unexpected positional argument after keyword argument")]
+    PositionalAfterKeyword {
+        #[label("this positional argument")]
+        at: SourceSpan,
+        #[label("after this keyword argument")]
+        after: SourceSpan,
+    },
+    #[error("Unexpected positional argument")]
+    TooManyPositionalArguments {
+        #[label("here")]
+        at: SourceSpan,
+    },
+    #[error("Unexpected keyword argument")]
+    UnexpectedKeywordArgument {
         #[label("here")]
         at: SourceSpan,
     },
@@ -1047,35 +1064,58 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
         parts: TagParts,
         params: Vec<String>,
         varargs: Option<String>,
-        varkw: Option<String>,
+        varkw: bool,
         defaults: Vec<Bound<'_, PyAny>>,
         kwonly: Vec<String>,
         kwonly_defaults: HashMap<String, Bound<'_, PyAny>>,
         takes_context: bool,
         function_name: String,
-    ) -> Result<(Vec<TagElement>, HashMap<String, TagElement>, Option<String>), ParseError> {
+    ) -> Result<(Vec<TagElement>, Vec<(String, TagElement)>, Option<String>), ParseError> {
         let mut args = Vec::new();
-        let mut kwargs = HashMap::new();
+        let mut kwargs = Vec::new();
         let target_var = None;
 
+        let mut prev_at = parts.at.clone();
+        let mut seen_kwarg = false;
+        let params_count = params.len();
         let lexer = SimpleTagLexer::new(self.template, parts);
-        for token in lexer {
+        for (index, token) in lexer.enumerate() {
             let token = token?;
             match token.kwarg {
-                None => {
-                    let content = self.template.content(token.at);
-                    let element = self.parse_variable(content, token.at, token.at.0)?;
-                    args.push(element);
-                }
+                None => match seen_kwarg {
+                    false => {
+                        if index == params_count {
+                            return Err(ParseError::TooManyPositionalArguments { at: token.at.into() });
+                        }
+                        let element = token.parse(self)?;
+                        args.push(element);
+                        prev_at = token.at;
+                    }
+                    true => {
+                        return Err(ParseError::PositionalAfterKeyword {
+                            at: token.at.into(),
+                            after: prev_at.into(),
+                        });
+                    }
+                },
                 Some(name_at) => {
+                    seen_kwarg = true;
+                    let kwarg_at = (name_at.0, name_at.1 + 1 + token.at.1);
                     let name = self.template.content(name_at);
-                    let content = self.template.content(token.at);
-                    let element = self.parse_variable(content, token.at, token.at.0)?;
-                    kwargs.insert(name.to_string(), element);
+                    if !varkw
+                        && !params.iter().any(|a| a == name)
+                        && !kwonly.iter().any(|kw| kw == name)
+                    {
+                        return Err(ParseError::UnexpectedKeywordArgument {
+                            at: kwarg_at.into(),
+                        });
+                    }
+                    let element = token.parse(self)?;
+                    kwargs.push((name.to_string(), element));
+                    prev_at = kwarg_at;
                 }
             }
         }
-        eprintln!("{args:?}");
 
         Ok((args, kwargs, target_var))
     }
@@ -1104,7 +1144,7 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
         let params = context.closure_values[5].extract()?;
         let takes_context = context.closure_values[6].is_truthy()?;
         let varargs = context.closure_values[7].extract()?;
-        let varkw = context.closure_values[8].extract()?;
+        let varkw = !context.closure_values[8].is_none();
 
         let (args, kwargs, target_var) = self.parse_custom_tag_parts(
             parts,
