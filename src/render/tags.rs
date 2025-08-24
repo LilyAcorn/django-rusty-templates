@@ -4,12 +4,12 @@ use num_bigint::{BigInt, Sign};
 use num_traits::cast::ToPrimitive;
 use pyo3::exceptions::PyAttributeError;
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyDict, PyList, PyNone, PyString};
+use pyo3::types::{PyBool, PyDict, PyList, PyNone, PyString, PyTuple};
 
 use super::types::{AsBorrowedContent, Content, Context};
 use super::{Evaluate, Render, RenderResult, Resolve, ResolveFailures, ResolveResult};
 use crate::error::{AnnotatePyErr, PyRenderError, RenderError};
-use crate::parse::{For, IfCondition, Tag, Url};
+use crate::parse::{For, IfCondition, SimpleTag, Tag, Url};
 use crate::template::django_rusty_templates::NoReverseMatch;
 use crate::types::TemplateString;
 use crate::utils::PyResultMethods;
@@ -647,6 +647,7 @@ impl Render for Tag {
             }
             Self::For(for_tag) => for_tag.render(py, template, context)?,
             Self::Load => Cow::Borrowed(""),
+            Self::SimpleTag(simple_tag) => simple_tag.render(py, template, context)?,
             Self::Url(url) => url.render(py, template, context)?,
         })
     }
@@ -756,5 +757,23 @@ impl Render for For {
                 unreachable!("float, int and bool literals are not iterable")
             }
         }
+    }
+}
+
+impl Render for SimpleTag {
+    fn render<'t>(
+        &self,
+        py: Python<'_>,
+        template: TemplateString<'t>,
+        context: &mut Context,
+    ) -> RenderResult<'t> {
+        let func = self.func.bind(py);
+        let mut args = Vec::new();
+        for arg in &self.args {
+            let arg = arg.resolve(py, template, context, ResolveFailures::Raise)?;
+            args.push(arg);
+        }
+        let content = func.call(PyTuple::new(py, args)?, Some(&PyDict::new(py)))?;
+        Ok(Cow::Owned(content.to_string()))
     }
 }

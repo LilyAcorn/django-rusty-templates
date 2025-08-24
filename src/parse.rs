@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::iter::Peekable;
+use std::sync::Arc;
 
 use either::Either;
 use miette::{Diagnostic, SourceSpan};
@@ -24,6 +25,7 @@ use crate::lex::START_TAG_LEN;
 use crate::lex::autoescape::{AutoescapeEnabled, AutoescapeError, lex_autoescape_argument};
 use crate::lex::common::{LexerError, text_content_at, translated_text_content_at};
 use crate::lex::core::{Lexer, TokenType};
+use crate::lex::custom_tag::{CustomTagToken, CustomTagLexer, CustomTagLexerError};
 use crate::lex::forloop::{ForLexer, ForLexerError, ForLexerInError, ForTokenType};
 use crate::lex::ifcondition::{
     IfConditionAtom, IfConditionLexer, IfConditionOperator, IfConditionTokenType,
@@ -425,6 +427,31 @@ pub struct For {
     pub empty: Option<Vec<TokenTree>>,
 }
 
+#[derive(Clone, Debug)]
+pub struct SimpleTag {
+    pub func: Arc<Py<PyAny>>,
+    pub at: (usize, usize),
+    pub takes_context: bool,
+    pub args: Vec<TagElement>,
+    pub kwargs: HashMap<String, TagElement>,
+    pub target_var: Option<String>,
+}
+
+impl PartialEq for SimpleTag {
+    fn eq(&self, other: &Self) -> bool {
+        // We use `Arc::ptr_eq` here to avoid needing the `py` token for true
+        // equality comparison between two `Py` smart pointers.
+        //
+        // We only use `eq` in tests, so this concession is acceptable here.
+        self.at == other.at
+            && self.takes_context == other.takes_context
+            && self.args == other.args
+            && self.kwargs == other.kwargs
+            && self.target_var == other.target_var
+            && Arc::ptr_eq(&self.func, &other.func)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Tag {
     Autoescape {
@@ -438,6 +465,7 @@ pub enum Tag {
     },
     For(For),
     Load,
+    SimpleTag(SimpleTag),
     Url(Url),
 }
 
@@ -566,6 +594,9 @@ pub enum ParseError {
     #[error(transparent)]
     #[diagnostic(transparent)]
     BlockError(#[from] TagLexerError),
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    CustomTagLexerError(#[from] CustomTagLexerError),
     #[error(transparent)]
     #[diagnostic(transparent)]
     LexerError(#[from] LexerError),
@@ -735,12 +766,23 @@ impl LoadToken {
     }
 }
 
+#[derive(Clone)]
+struct SimpleTagContext<'py> {
+    closure_names: Vec<String>,
+    closure_values: Vec<Bound<'py, PyAny>>,
+}
+
+#[derive(Clone)]
+enum TagContext<'py> {
+    SimpleTag(SimpleTagContext<'py>),
+}
+
 pub struct Parser<'t, 'l, 'py> {
     py: Python<'py>,
     template: TemplateString<'t>,
     lexer: Lexer<'t>,
     libraries: &'l HashMap<String, Py<PyAny>>,
-    external_tags: HashMap<String, Bound<'py, PyAny>>,
+    external_tags: HashMap<String, TagContext<'py>>,
     external_filters: HashMap<String, Bound<'py, PyAny>>,
     forloop_depth: usize,
 }
@@ -995,8 +1037,93 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
                 at,
                 parts,
             }),
-            tag_name => todo!("{tag_name}"),
+            tag_name => match self.external_tags.get(tag_name) {
+                Some(TagContext::SimpleTag(context)) => {
+                    Either::Left(self.parse_simple_tag(context, at, parts)?)
+                }
+                None => todo!("{tag_name}"),
+            },
         })
+    }
+
+    fn parse_custom_tag_parts(
+        &self,
+        parts: TagParts,
+        params: Vec<String>,
+        varargs: Option<String>,
+        varkw: Option<String>,
+        defaults: Vec<Bound<'_, PyAny>>,
+        kwonly: Vec<String>,
+        kwonly_defaults: HashMap<String, Bound<'_, PyAny>>,
+        takes_context: bool,
+        function_name: String,
+    ) -> Result<(Vec<TagElement>, HashMap<String, TagElement>, Option<String>), ParseError> {
+        let mut args = Vec::new();
+        let mut kwargs = HashMap::new();
+        let target_var = None;
+
+        let lexer = CustomTagLexer::new(self.template, parts, takes_context);
+        for token in lexer {
+            eprintln!("{token:?}");
+            match token? {
+                CustomTagToken::Arg { at } => {
+                    let content = self.template.content(at);
+                    let element = self.parse_variable(content, at, at.0)?;
+                    args.push(element);
+                }
+            }
+        }
+        eprintln!("{args:?}");
+
+        Ok((args, kwargs, target_var))
+    }
+
+    fn parse_simple_tag(
+        &self,
+        context: &SimpleTagContext,
+        at: (usize, usize),
+        parts: TagParts,
+    ) -> Result<TokenTree, PyParseError> {
+        eprintln!("{:?}", context.closure_names);
+        eprintln!("{:?}", context.closure_values);
+        let defaults = &context.closure_values[0];
+        let defaults = match defaults.is_none() {
+            true => Vec::new(),
+            false => defaults.extract()?,
+        };
+        let func = context.closure_values[1].clone();
+        let function_name = context.closure_values[2].extract()?;
+        let kwonly = context.closure_values[3].extract()?;
+        let kwonly_defaults = &context.closure_values[4];
+        let kwonly_defaults = match kwonly_defaults.is_none() {
+            true => HashMap::new(),
+            false => kwonly_defaults.extract()?,
+        };
+        let params = context.closure_values[5].extract()?;
+        let takes_context = context.closure_values[6].is_truthy()?;
+        let varargs = context.closure_values[7].extract()?;
+        let varkw = context.closure_values[8].extract()?;
+
+        let (args, kwargs, target_var) = self.parse_custom_tag_parts(
+            parts,
+            params,
+            varargs,
+            varkw,
+            defaults,
+            kwonly,
+            kwonly_defaults,
+            takes_context,
+            function_name,
+        )?;
+        let tag = SimpleTag {
+            func: func.unbind().into(),
+            at,
+            takes_context,
+            args,
+            kwargs,
+            target_var,
+        };
+        Ok(TokenTree::Tag(Tag::SimpleTag(tag)))
     }
 
     fn parse_load(
@@ -1018,7 +1145,7 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
                     self.external_filters
                         .insert(content.to_string(), filter.clone());
                 } else if let Some(tag) = tags.get(content) {
-                    self.external_tags.insert(content.to_string(), tag.clone());
+                    self.load_tag(content, tag)?;
                 } else {
                     return Err(ParseError::MissingFilterTag {
                         library: self.template.content(last.at).to_string(),
@@ -1036,9 +1163,37 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
             let filters = self.get_filters(library)?;
             let tags = self.get_tags(library)?;
             self.external_filters.extend(filters);
-            self.external_tags.extend(tags);
+            for (name, tag) in &tags {
+                self.load_tag(name, tag)?;
+            }
         }
         Ok(TokenTree::Tag(Tag::Load))
+    }
+
+    fn load_tag(&mut self, name: &str, tag: &Bound<'py, PyAny>) -> Result<(), PyParseError> {
+        let tag_code = tag.getattr("__code__")?;
+        let qualname = tag_code.getattr("co_qualname")?;
+        let real_name: &str = qualname.extract()?;
+        let tag = if real_name.starts_with("Library.simple_tag") {
+            let closure_names = tag_code.getattr("co_freevars")?.extract()?;
+            let closure_values = tag
+                .getattr("__closure__")?
+                .try_iter()?
+                .map(|v| v?.getattr("cell_contents"))
+                .collect::<Result<Vec<_>, _>>()?;
+            TagContext::SimpleTag(SimpleTagContext {
+                closure_names,
+                closure_values,
+            })
+        } else if real_name.starts_with("Library.simple_block_tag") {
+            todo!("Simple block tag")
+        } else if real_name.starts_with("Library.inclusion_tag") {
+            todo!("Inclusion tag")
+        } else {
+            todo!("Fully custom tag")
+        };
+        self.external_tags.insert(name.to_string(), tag);
+        Ok(())
     }
 
     fn get_tags(
@@ -1209,7 +1364,6 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
 mod tests {
     use super::*;
     use pyo3::types::{PyDict, PyDictMethods};
-    use std::sync::Arc;
 
     use crate::lex::common::LexerError;
     use crate::{

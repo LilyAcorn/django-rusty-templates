@@ -18,7 +18,7 @@ pub struct TagToken {
     pub at: (usize, usize),
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TagParts {
     pub at: (usize, usize),
 }
