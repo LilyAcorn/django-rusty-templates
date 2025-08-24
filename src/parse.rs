@@ -25,14 +25,13 @@ use crate::lex::START_TAG_LEN;
 use crate::lex::autoescape::{AutoescapeEnabled, AutoescapeError, lex_autoescape_argument};
 use crate::lex::common::{LexerError, text_content_at, translated_text_content_at};
 use crate::lex::core::{Lexer, TokenType};
-use crate::lex::custom_tag::{CustomTagLexer, CustomTagLexerError, CustomTagToken};
+use crate::lex::custom_tag::{SimpleTagLexer, SimpleTagLexerError, SimpleTagToken, SimpleTagTokenType};
 use crate::lex::forloop::{ForLexer, ForLexerError, ForLexerInError, ForTokenType};
 use crate::lex::ifcondition::{
     IfConditionAtom, IfConditionLexer, IfConditionOperator, IfConditionTokenType,
 };
 use crate::lex::load::{LoadLexer, LoadToken};
 use crate::lex::tag::{TagLexerError, TagParts, lex_tag};
-use crate::lex::url::{UrlLexer, UrlLexerError, UrlToken, UrlTokenType};
 use crate::lex::variable::{
     Argument as ArgumentToken, ArgumentType as ArgumentTokenType, VariableLexerError,
     VariableTokenType, lex_variable,
@@ -170,16 +169,16 @@ fn parse_numeric(content: &str, at: (usize, usize)) -> Result<TagElement, ParseE
     }
 }
 
-impl UrlToken {
+impl SimpleTagToken {
     fn parse(&self, parser: &Parser) -> Result<TagElement, ParseError> {
         let content_at = self.content_at();
         let (start, _len) = content_at;
         let content = parser.template.content(content_at);
         match self.token_type {
-            UrlTokenType::Numeric => parse_numeric(content, self.at),
-            UrlTokenType::Text => Ok(TagElement::Text(Text::new(content_at))),
-            UrlTokenType::TranslatedText => Ok(TagElement::TranslatedText(Text::new(content_at))),
-            UrlTokenType::Variable => parser.parse_variable(content, content_at, start),
+            SimpleTagTokenType::Numeric => parse_numeric(content, self.at),
+            SimpleTagTokenType::Text => Ok(TagElement::Text(Text::new(content_at))),
+            SimpleTagTokenType::TranslatedText => Ok(TagElement::TranslatedText(Text::new(content_at))),
+            SimpleTagTokenType::Variable => parser.parse_variable(content, content_at, start),
         }
     }
 }
@@ -596,9 +595,6 @@ pub enum ParseError {
     BlockError(#[from] TagLexerError),
     #[error(transparent)]
     #[diagnostic(transparent)]
-    CustomTagLexerError(#[from] CustomTagLexerError),
-    #[error(transparent)]
-    #[diagnostic(transparent)]
     LexerError(#[from] LexerError),
     #[error(transparent)]
     #[diagnostic(transparent)]
@@ -618,7 +614,7 @@ pub enum ParseError {
     },
     #[error(transparent)]
     #[diagnostic(transparent)]
-    UrlLexerError(#[from] UrlLexerError),
+    SimpleTagLexerError(#[from] SimpleTagLexerError),
     #[error(transparent)]
     #[diagnostic(transparent)]
     VariableError(#[from] VariableLexerError),
@@ -1062,19 +1058,19 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
         let mut kwargs = HashMap::new();
         let target_var = None;
 
-        let lexer = CustomTagLexer::new(self.template, parts, takes_context);
+        let lexer = SimpleTagLexer::new(self.template, parts);
         for token in lexer {
-            eprintln!("{token:?}");
-            match token? {
-                CustomTagToken::Arg { at } => {
-                    let content = self.template.content(at);
-                    let element = self.parse_variable(content, at, at.0)?;
+            let token = token?;
+            match token.kwarg {
+                None => {
+                    let content = self.template.content(token.at);
+                    let element = self.parse_variable(content, token.at, token.at.0)?;
                     args.push(element);
                 }
-                CustomTagToken::Kwarg { at, name_at } => {
+                Some(name_at) => {
                     let name = self.template.content(name_at);
-                    let content = self.template.content(at);
-                    let element = self.parse_variable(content, at, at.0)?;
+                    let content = self.template.content(token.at);
+                    let element = self.parse_variable(content, token.at, token.at.0)?;
                     kwargs.insert(name.to_string(), element);
                 }
             }
@@ -1218,7 +1214,7 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
     }
 
     fn parse_url(&mut self, at: (usize, usize), parts: TagParts) -> Result<TokenTree, ParseError> {
-        let mut lexer = UrlLexer::new(self.template, parts);
+        let mut lexer = SimpleTagLexer::new(self.template, parts);
         let view_name = match lexer.next() {
             Some(view_token) => view_token?.parse(self)?,
             None => return Err(ParseError::UrlTagNoArguments { at: at.into() }),
@@ -1231,14 +1227,14 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
         let mut rev = tokens.iter().rev();
         let variable = match (rev.next(), rev.next()) {
             (
-                Some(UrlToken {
+                Some(SimpleTagToken {
                     at: last,
-                    token_type: UrlTokenType::Variable,
+                    token_type: SimpleTagTokenType::Variable,
                     ..
                 }),
-                Some(UrlToken {
+                Some(SimpleTagToken {
                     at: prev,
-                    token_type: UrlTokenType::Variable,
+                    token_type: SimpleTagTokenType::Variable,
                     ..
                 }),
             ) => {

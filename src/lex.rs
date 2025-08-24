@@ -6,7 +6,6 @@ pub mod forloop;
 pub mod ifcondition;
 pub mod load;
 pub mod tag;
-pub mod url;
 pub mod variable;
 
 pub const START_TAG_LEN: usize = 2;
