@@ -25,7 +25,7 @@ use crate::lex::START_TAG_LEN;
 use crate::lex::autoescape::{AutoescapeEnabled, AutoescapeError, lex_autoescape_argument};
 use crate::lex::common::{LexerError, text_content_at, translated_text_content_at};
 use crate::lex::core::{Lexer, TokenType};
-use crate::lex::custom_tag::{CustomTagToken, CustomTagLexer, CustomTagLexerError};
+use crate::lex::custom_tag::{CustomTagLexer, CustomTagLexerError, CustomTagToken};
 use crate::lex::forloop::{ForLexer, ForLexerError, ForLexerInError, ForTokenType};
 use crate::lex::ifcondition::{
     IfConditionAtom, IfConditionLexer, IfConditionOperator, IfConditionTokenType,
@@ -1070,6 +1070,12 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
                     let content = self.template.content(at);
                     let element = self.parse_variable(content, at, at.0)?;
                     args.push(element);
+                }
+                CustomTagToken::Kwarg { at, name_at } => {
+                    let name = self.template.content(name_at);
+                    let content = self.template.content(at);
+                    let element = self.parse_variable(content, at, at.0)?;
+                    kwargs.insert(name.to_string(), element);
                 }
             }
         }

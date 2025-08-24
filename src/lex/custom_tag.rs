@@ -1,20 +1,24 @@
 use miette::Diagnostic;
 use thiserror::Error;
+use unicode_xid::UnicodeXID;
 
-use crate::types::TemplateString;
 use super::common::NextChar;
 use super::tag::TagParts;
-
+use crate::types::TemplateString;
 
 #[derive(Debug)]
 pub enum CustomTagToken {
-    Arg {at: (usize, usize)},
+    Arg {
+        at: (usize, usize),
+    },
+    Kwarg {
+        at: (usize, usize),
+        name_at: (usize, usize),
+    },
 }
 
 #[derive(Error, Debug, Diagnostic, PartialEq, Eq)]
-pub enum CustomTagLexerError {
-}
-
+pub enum CustomTagLexerError {}
 
 pub struct CustomTagLexer<'t> {
     rest: &'t str,
@@ -30,6 +34,18 @@ impl<'t> CustomTagLexer<'t> {
             takes_context,
         }
     }
+
+    fn lex_kwarg(&mut self) -> Option<(usize, usize)> {
+        let index = self.rest.find('=')?;
+        match self.rest.find(|c: char| !c.is_xid_continue()) {
+            Some(n) if n < index => return None,
+            _ => {}
+        }
+        let at = (self.byte, index);
+        self.rest = &self.rest[index + 1..];
+        self.byte += index + 1;
+        Some(at)
+    }
 }
 
 impl Iterator for CustomTagLexer<'_> {
@@ -40,6 +56,8 @@ impl Iterator for CustomTagLexer<'_> {
             return None;
         }
 
+        let kwarg = self.lex_kwarg();
+
         let start = self.byte;
         let len = self.rest.next_whitespace();
         let rest = &self.rest[len..];
@@ -48,6 +66,9 @@ impl Iterator for CustomTagLexer<'_> {
         self.byte = self.byte + len + next;
 
         let at = (start, len);
-        Some(Ok(CustomTagToken::Arg { at }))
+        Some(Ok(match kwarg {
+            Some(kwarg) => CustomTagToken::Kwarg { at, name_at: kwarg },
+            None => CustomTagToken::Arg { at },
+        }))
     }
 }

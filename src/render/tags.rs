@@ -769,11 +769,16 @@ impl Render for SimpleTag {
     ) -> RenderResult<'t> {
         let func = self.func.bind(py);
         let mut args = Vec::new();
+        let mut kwargs = PyDict::new(py);
         for arg in &self.args {
             let arg = arg.resolve(py, template, context, ResolveFailures::Raise)?;
             args.push(arg);
         }
-        let content = func.call(PyTuple::new(py, args)?, Some(&PyDict::new(py)))?;
+        for (key, value) in &self.kwargs {
+            let value = value.resolve(py, template, context, ResolveFailures::Raise)?;
+            kwargs.set_item(key, value)?;
+        }
+        let content = func.call(PyTuple::new(py, args)?, Some(&kwargs))?;
         Ok(Cow::Owned(content.to_string()))
     }
 }
