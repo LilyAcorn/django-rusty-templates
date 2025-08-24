@@ -1171,26 +1171,27 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
     }
 
     fn load_tag(&mut self, name: &str, tag: &Bound<'py, PyAny>) -> Result<(), PyParseError> {
-        let tag_code = tag.getattr("__code__")?;
-        let qualname = tag_code.getattr("co_qualname")?;
-        let real_name: &str = qualname.extract()?;
-        let tag = if real_name.starts_with("Library.simple_tag") {
-            let closure_names = tag_code.getattr("co_freevars")?.extract()?;
+        let closure = tag.getattr("__closure__")?;
+        let tag = if closure.is_none() {
+            todo!("Fully custom tag")
+        } else {
+            let tag_code = tag.getattr("__code__")?;
+            let closure_names: Vec<String> = tag_code.getattr("co_freevars")?.extract()?;
             let closure_values = tag
                 .getattr("__closure__")?
                 .try_iter()?
                 .map(|v| v?.getattr("cell_contents"))
                 .collect::<Result<Vec<_>, _>>()?;
-            TagContext::SimpleTag(SimpleTagContext {
-                closure_names,
-                closure_values,
-            })
-        } else if real_name.starts_with("Library.simple_block_tag") {
-            todo!("Simple block tag")
-        } else if real_name.starts_with("Library.inclusion_tag") {
-            todo!("Inclusion tag")
-        } else {
-            todo!("Fully custom tag")
+            if closure_names.contains(&"filename".to_string()) {
+                todo!("Inclusion tag")
+            } else if closure_names.contains(&"end_name".to_string()) {
+                todo!("Simple block tag")
+            } else {
+                TagContext::SimpleTag(SimpleTagContext {
+                    closure_names,
+                    closure_values,
+                })
+            }
         };
         self.external_tags.insert(name.to_string(), tag);
         Ok(())
