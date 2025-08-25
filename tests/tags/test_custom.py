@@ -327,3 +327,66 @@ def test_simple_tag_positional_missing_target_variable():
    ·                                                    ╰── here
    ╰────
 """
+
+
+def test_simple_tag_incomplete_keyword_argument():
+    template = "{% load double from custom_tags %}{% double value= %}"
+
+    with pytest.raises(TemplateSyntaxError) as exc_info:
+        engines["django"].from_string(template)
+
+    assert str(exc_info.value) == "Could not parse the remainder: '=' from 'value='"
+
+    with pytest.raises(TemplateSyntaxError) as exc_info:
+        engines["rusty"].from_string(template)
+
+    assert str(exc_info.value) == """\
+  × Incomplete keyword argument
+   ╭────
+ 1 │ {% load double from custom_tags %}{% double value= %}
+   ·                                             ───┬──
+   ·                                                ╰── here
+   ╰────
+"""
+
+
+def test_simple_tag_invalid_filter():
+    template = "{% load double from custom_tags %}{% double foo|bar %}"
+
+    with pytest.raises(TemplateSyntaxError) as exc_info:
+        engines["django"].from_string(template)
+
+    assert str(exc_info.value) == "Invalid filter: 'bar'"
+
+    with pytest.raises(TemplateSyntaxError) as exc_info:
+        engines["rusty"].from_string(template)
+
+    assert str(exc_info.value) == """\
+  × Invalid filter: 'bar'
+   ╭────
+ 1 │ {% load double from custom_tags %}{% double foo|bar %}
+   ·                                                 ─┬─
+   ·                                                  ╰── here
+   ╰────
+"""
+
+
+def test_simple_tag_invalid_filter_in_keyword_argument():
+    template = "{% load double from custom_tags %}{% double value=foo|bar %}"
+
+    with pytest.raises(TemplateSyntaxError) as exc_info:
+        engines["django"].from_string(template)
+
+    assert str(exc_info.value) == "Invalid filter: 'bar'"
+
+    with pytest.raises(TemplateSyntaxError) as exc_info:
+        engines["rusty"].from_string(template)
+
+    assert str(exc_info.value) == """\
+  × Invalid filter: 'bar'
+   ╭────
+ 1 │ {% load double from custom_tags %}{% double value=foo|bar %}
+   ·                                                       ─┬─
+   ·                                                        ╰── here
+   ╰────
+"""
