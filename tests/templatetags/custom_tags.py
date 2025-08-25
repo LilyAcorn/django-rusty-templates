@@ -15,6 +15,11 @@ def multiply(a, b, c):
 
 
 @register.simple_tag
+def invert(value=2):
+    return 1 / value
+
+
+@register.simple_tag
 def table(**kwargs):
     return "\n".join(f"{k}-{v}" for k, v in kwargs.items())
 

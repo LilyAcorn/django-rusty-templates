@@ -33,6 +33,36 @@ def test_simple_tag_kwargs():
     assert rust_template.render({}) == "foo-bar\nspam-1"
 
 
+def test_simple_tag_double_as_variable():
+    template = "{% load double from custom_tags %}{% double 3 as foo %}{{ foo }}"
+
+    django_template = engines["django"].from_string(template)
+    rust_template = engines["rusty"].from_string(template)
+
+    assert django_template.render({}) == "6"
+    assert rust_template.render({}) == "6"
+
+
+def test_simple_tag_double_kwarg_as_variable():
+    template = "{% load double from custom_tags %}{% double value=3 as foo %}{{ foo }}"
+
+    django_template = engines["django"].from_string(template)
+    rust_template = engines["rusty"].from_string(template)
+
+    assert django_template.render({}) == "6"
+    assert rust_template.render({}) == "6"
+
+
+def test_simple_tag_as_variable_after_default():
+    template = "{% load invert from custom_tags %}{% invert as foo %}{{ foo }}"
+
+    django_template = engines["django"].from_string(template)
+    rust_template = engines["rusty"].from_string(template)
+
+    assert django_template.render({}) == "0.5"
+    assert rust_template.render({}) == "0.5"
+
+
 def test_simple_tag_positional_after_kwarg():
     template = "{% load double from custom_tags %}{% double value=3 foo %}"
 
@@ -178,5 +208,112 @@ def test_simple_tag_duplicate_keyword_arguments():
    ·                                                     ─┬─     ─┬─
    ·                                                      │       ╰── second
    ·                                                      ╰── first
+   ╰────
+"""
+
+
+def test_simple_tag_keyword_as_multiple_variables():
+    template = "{% load double from custom_tags %}{% double value=1 as foo bar %}"
+
+    with pytest.raises(TemplateSyntaxError) as exc_info:
+        engines["django"].from_string(template)
+
+    assert str(exc_info.value) == "'double' received some positional argument(s) after some keyword argument(s)"
+
+    with pytest.raises(TemplateSyntaxError) as exc_info:
+        engines["rusty"].from_string(template)
+
+    assert str(exc_info.value) == """\
+  × Unexpected positional argument after keyword argument
+   ╭────
+ 1 │ {% load double from custom_tags %}{% double value=1 as foo bar %}
+   ·                                             ───┬─── ─┬
+   ·                                                │     ╰── this positional argument
+   ·                                                ╰── after this keyword argument
+   ╰────
+"""
+
+
+def test_simple_tag_positional_as_multiple_variables():
+    template = "{% load double from custom_tags %}{% double value as foo bar %}"
+
+    with pytest.raises(TemplateSyntaxError) as exc_info:
+        engines["django"].from_string(template)
+
+    assert str(exc_info.value) == "'double' received too many positional arguments"
+
+    with pytest.raises(TemplateSyntaxError) as exc_info:
+        engines["rusty"].from_string(template)
+
+    assert str(exc_info.value) == """\
+  × Unexpected positional argument
+   ╭────
+ 1 │ {% load double from custom_tags %}{% double value as foo bar %}
+   ·                                                   ─┬
+   ·                                                    ╰── here
+   ╰────
+"""
+
+
+def test_simple_tag_positional_as_multiple_variables_with_default():
+    template = "{% load invert from custom_tags %}{% invert as foo bar %}"
+
+    with pytest.raises(TemplateSyntaxError) as exc_info:
+        engines["django"].from_string(template)
+
+    assert str(exc_info.value) == "'invert' received too many positional arguments"
+
+    with pytest.raises(TemplateSyntaxError) as exc_info:
+        engines["rusty"].from_string(template)
+
+    assert str(exc_info.value) == """\
+  × Unexpected positional argument
+   ╭────
+ 1 │ {% load invert from custom_tags %}{% invert as foo bar %}
+   ·                                                ─┬─
+   ·                                                 ╰── here
+   ╰────
+"""
+
+
+def test_simple_tag_keyword_missing_target_variable():
+    template = "{% load double from custom_tags %}{% double value=1 as %}"
+
+    with pytest.raises(TemplateSyntaxError) as exc_info:
+        engines["django"].from_string(template)
+
+    assert str(exc_info.value) == "'double' received some positional argument(s) after some keyword argument(s)"
+
+    with pytest.raises(TemplateSyntaxError) as exc_info:
+        engines["rusty"].from_string(template)
+
+    assert str(exc_info.value) == """\
+  × Unexpected positional argument after keyword argument
+   ╭────
+ 1 │ {% load double from custom_tags %}{% double value=1 as %}
+   ·                                             ───┬─── ─┬
+   ·                                                │     ╰── this positional argument
+   ·                                                ╰── after this keyword argument
+   ╰────
+"""
+
+
+def test_simple_tag_positional_missing_target_variable():
+    template = "{% load double from custom_tags %}{% double value as %}"
+
+    with pytest.raises(TemplateSyntaxError) as exc_info:
+        engines["django"].from_string(template)
+
+    assert str(exc_info.value) == "'double' received too many positional arguments"
+
+    with pytest.raises(TemplateSyntaxError) as exc_info:
+        engines["rusty"].from_string(template)
+
+    assert str(exc_info.value) == """\
+  × Unexpected positional argument
+   ╭────
+ 1 │ {% load double from custom_tags %}{% double value as %}
+   ·                                                   ─┬
+   ·                                                    ╰── here
    ╰────
 """

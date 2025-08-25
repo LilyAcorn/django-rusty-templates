@@ -1093,33 +1093,42 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
     ) -> Result<(Vec<TagElement>, Vec<(String, TagElement)>, Option<String>), ParseError> {
         let mut args = Vec::new();
         let mut kwargs = Vec::new();
-        let target_var = None;
 
         let parts_at = parts.at;
         let mut prev_at = parts.at;
         let mut seen_kwargs: HashMap<&str, (usize, usize)> = HashMap::new();
         let params_count = params.len();
-        let lexer = SimpleTagLexer::new(self.template, parts);
-        for (index, token) in lexer.enumerate() {
-            let token = token?;
+        let mut tokens = SimpleTagLexer::new(self.template, parts).collect::<Result<Vec<_>, _>>()?;
+        let tokens_count = tokens.len();
+        let target_var = if tokens_count >= 2 && self.template.content(tokens[tokens_count - 2].at) == "as" {
+            let last = tokens.pop().expect("tokens should be length 2 or more");
+            tokens.pop();
+            Some(self.template.content(last.at).to_string())
+        } else {
+            None
+        };
+
+        for (index, token) in tokens.iter().enumerate() {
             match token.kwarg {
-                None => match seen_kwargs.is_empty() {
-                    true => {
-                        if index == params_count {
-                            return Err(ParseError::TooManyPositionalArguments {
+                None => {
+                    match seen_kwargs.is_empty() {
+                        true => {
+                            if index == params_count {
+                                return Err(ParseError::TooManyPositionalArguments {
+                                    at: token.at.into(),
+                                });
+                            }
+                            let element = token.parse(self)?;
+                            args.push(element);
+                        }
+                        false => {
+                            return Err(ParseError::PositionalAfterKeyword {
                                 at: token.at.into(),
+                                after: prev_at.into(),
                             });
                         }
-                        let element = token.parse(self)?;
-                        args.push(element);
-                        prev_at = token.at;
                     }
-                    false => {
-                        return Err(ParseError::PositionalAfterKeyword {
-                            at: token.at.into(),
-                            after: prev_at.into(),
-                        });
-                    }
+                    prev_at = token.at;
                 },
                 Some(name_at) => {
                     let kwarg_at = (name_at.0, name_at.1 + 1 + token.at.1);
