@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::iter::Peekable;
 use std::sync::Arc;
 
@@ -685,6 +685,15 @@ pub enum ParseError {
         #[label("here")]
         at: SourceSpan,
     },
+    #[error("'{tag_name}' received multiple values for keyword argument '{kwarg_name}'")]
+    DuplicateKeywordArgument {
+        tag_name: String,
+        kwarg_name: String,
+        #[label("first")]
+        first_at: SourceSpan,
+        #[label("second")]
+        second_at: SourceSpan,
+    },
     #[error("Unexpected positional argument after keyword argument")]
     PositionalAfterKeyword {
         #[label("this positional argument")]
@@ -1088,7 +1097,7 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
 
         let parts_at = parts.at;
         let mut prev_at = parts.at;
-        let mut seen_kwargs = HashSet::new();
+        let mut seen_kwargs: HashMap<&str, (usize, usize)> = HashMap::new();
         let params_count = params.len();
         let lexer = SimpleTagLexer::new(self.template, parts);
         for (index, token) in lexer.enumerate() {
@@ -1122,9 +1131,16 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
                         return Err(ParseError::UnexpectedKeywordArgument {
                             at: kwarg_at.into(),
                         });
+                    } else if let Some(&first_at) = seen_kwargs.get(name) {
+                        return Err(ParseError::DuplicateKeywordArgument {
+                            tag_name: function_name,
+                            kwarg_name: name.to_string(),
+                            first_at: first_at.into(),
+                            second_at: kwarg_at.into(),
+                        });
                     }
                     let element = token.parse(self)?;
-                    seen_kwargs.insert(name);
+                    seen_kwargs.insert(name, kwarg_at);
                     kwargs.push((name.to_string(), element));
                     prev_at = kwarg_at;
                 }
@@ -1135,7 +1151,7 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
         if params_count > args_count + defaults_count {
             let missing_params: Vec<_> = params[args_count..params_count - defaults_count]
                 .iter()
-                .filter(|p| !seen_kwargs.contains(p.as_str()))
+                .filter(|p| !seen_kwargs.contains_key(p.as_str()))
                 .collect();
             if !missing_params.is_empty() {
                 let missing = missing_params

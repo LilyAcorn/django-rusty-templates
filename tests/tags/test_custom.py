@@ -158,3 +158,25 @@ def test_simple_tag_missing_arguments_with_kwarg():
    ·                                                  ╰── here
    ╰────
 """
+
+
+def test_simple_tag_duplicate_keyword_arguments():
+    template = "{% load multiply from custom_tags %}{% multiply a=1 b=2 c=3 b=4 %}"
+
+    with pytest.raises(TemplateSyntaxError) as exc_info:
+        engines["django"].from_string(template)
+
+    assert str(exc_info.value) == "'multiply' received multiple values for keyword argument 'b'"
+
+    with pytest.raises(TemplateSyntaxError) as exc_info:
+        engines["rusty"].from_string(template)
+
+    assert str(exc_info.value) == """\
+  × 'multiply' received multiple values for keyword argument 'b'
+   ╭────
+ 1 │ {% load multiply from custom_tags %}{% multiply a=1 b=2 c=3 b=4 %}
+   ·                                                     ─┬─     ─┬─
+   ·                                                      │       ╰── second
+   ·                                                      ╰── first
+   ╰────
+"""
