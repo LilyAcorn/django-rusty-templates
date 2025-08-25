@@ -410,3 +410,27 @@ def test_simple_tag_invalid_filter_in_keyword_argument():
    ·                                                        ╰── here
    ╰────
 """
+
+
+def test_simple_tag_render_error():
+    template = "{% load custom_tags %}{% combine operation='divide' %}"
+
+    django_template = engines["django"].from_string(template)
+    rust_template = engines["rusty"].from_string(template)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        django_template.render({})
+
+    assert str(exc_info.value) == "Unknown operation"
+
+    with pytest.raises(RuntimeError) as exc_info:
+        rust_template.render({})
+
+    assert str(exc_info.value) == """\
+  × Unknown operation
+   ╭────
+ 1 │ {% load custom_tags %}{% combine operation='divide' %}
+   ·                       ────────────────┬───────────────
+   ·                                       ╰── here
+   ╰────
+"""

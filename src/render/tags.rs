@@ -778,7 +778,9 @@ impl Render for SimpleTag {
             let value = value.resolve(py, template, context, ResolveFailures::Raise)?;
             kwargs.set_item(key, value)?;
         }
-        let content = func.call(PyTuple::new(py, args)?, Some(&kwargs))?;
-        Ok(Cow::Owned(content.to_string()))
+        match func.call(PyTuple::new(py, args)?, Some(&kwargs)) {
+            Ok(content) => Ok(Cow::Owned(content.to_string())),
+            Err(error) => Err(error.annotate(py, self.at, "here", template).into()),
+        }
     }
 }
