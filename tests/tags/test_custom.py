@@ -73,6 +73,26 @@ def test_simple_tag_as_variable_after_default():
     assert rust_template.render({}) == "0.5"
 
 
+def test_simple_tag_varargs():
+    template = "{% load combine from custom_tags %}{% combine 2 3 4 as foo %}{{ foo }}"
+
+    django_template = engines["django"].from_string(template)
+    rust_template = engines["rusty"].from_string(template)
+
+    assert django_template.render({}) == "9"
+    assert rust_template.render({}) == "9"
+
+
+def test_simple_tag_varargs_with_kwarg():
+    template = "{% load combine from custom_tags %}{% combine 2 3 4 operation='multiply' as foo %}{{ foo }}"
+
+    django_template = engines["django"].from_string(template)
+    rust_template = engines["rusty"].from_string(template)
+
+    assert django_template.render({}) == "24"
+    assert rust_template.render({}) == "24"
+
+
 def test_simple_tag_positional_after_kwarg():
     template = "{% load double from custom_tags %}{% double value=3 foo %}"
 

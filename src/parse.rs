@@ -1083,7 +1083,7 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
         &self,
         parts: TagParts,
         params: Vec<String>,
-        varargs: Option<String>,
+        varargs: bool,
         varkw: bool,
         defaults_count: usize,
         kwonly: Vec<String>,
@@ -1115,7 +1115,7 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
                 None => {
                     match seen_kwargs.is_empty() {
                         true => {
-                            if index == params_count {
+                            if !varargs && index == params_count {
                                 return Err(ParseError::TooManyPositionalArguments {
                                     at: token.at.into(),
                                 });
@@ -1203,7 +1203,7 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
         };
         let params = context.closure_values[5].extract()?;
         let takes_context = context.closure_values[6].is_truthy()?;
-        let varargs = context.closure_values[7].extract()?;
+        let varargs = !context.closure_values[7].is_none();
         let varkw = !context.closure_values[8].is_none();
 
         let (args, kwargs, target_var) = self.parse_custom_tag_parts(

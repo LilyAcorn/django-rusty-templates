@@ -20,6 +20,16 @@ def invert(value=2):
 
 
 @register.simple_tag
+def combine(*args, operation="add"):
+    if operation == "add":
+        return sum(args)
+    total = 1
+    for arg in args:
+        total *= arg
+    return total
+
+
+@register.simple_tag
 def table(**kwargs):
     return "\n".join(f"{k}-{v}" for k, v in kwargs.items())
 
