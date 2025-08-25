@@ -33,6 +33,16 @@ def test_simple_tag_kwargs():
     assert rust_template.render({}) == "foo-bar\nspam-1"
 
 
+def test_simple_tag_positional_and_kwargs():
+    template = "{% load multiply from custom_tags %}{% multiply 3 b=2 c=4 %}"
+
+    django_template = engines["django"].from_string(template)
+    rust_template = engines["rusty"].from_string(template)
+
+    assert django_template.render({}) == "24"
+    assert rust_template.render({}) == "24"
+
+
 def test_simple_tag_double_as_variable():
     template = "{% load double from custom_tags %}{% double 3 as foo %}{{ foo }}"
 
