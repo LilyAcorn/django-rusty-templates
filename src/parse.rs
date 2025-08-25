@@ -1098,15 +1098,17 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
         let mut prev_at = parts.at;
         let mut seen_kwargs: HashMap<&str, (usize, usize)> = HashMap::new();
         let params_count = params.len();
-        let mut tokens = SimpleTagLexer::new(self.template, parts).collect::<Result<Vec<_>, _>>()?;
+        let mut tokens =
+            SimpleTagLexer::new(self.template, parts).collect::<Result<Vec<_>, _>>()?;
         let tokens_count = tokens.len();
-        let target_var = if tokens_count >= 2 && self.template.content(tokens[tokens_count - 2].at) == "as" {
-            let last = tokens.pop().expect("tokens should be length 2 or more");
-            tokens.pop();
-            Some(self.template.content(last.at).to_string())
-        } else {
-            None
-        };
+        let target_var =
+            if tokens_count >= 2 && self.template.content(tokens[tokens_count - 2].at) == "as" {
+                let last = tokens.pop().expect("tokens should be length 2 or more");
+                tokens.pop();
+                Some(self.template.content(last.at).to_string())
+            } else {
+                None
+            };
 
         for (index, token) in tokens.iter().enumerate() {
             match token.kwarg {
@@ -1129,7 +1131,7 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
                         }
                     }
                     prev_at = token.at;
-                },
+                }
                 Some(name_at) => {
                     let kwarg_at = (name_at.0, name_at.1 + 1 + token.at.1);
                     let name = self.template.content(name_at);
@@ -2311,6 +2313,35 @@ mod tests {
                     at: (0, 3),
                     argument_type: ArgumentType::Float(1.0)
                 }))
+            );
+        })
+    }
+
+    #[test]
+    fn test_simple_tag_partial_eq() {
+        pyo3::prepare_freethreaded_python();
+
+        Python::with_gil(|py| {
+            let func: Arc<Py<PyAny>> = PyDict::new(py).into_any().unbind().into();
+            let at = (0, 1);
+            let takes_context = true;
+            assert_eq!(
+                SimpleTag {
+                    func: func.clone(),
+                    at,
+                    takes_context,
+                    args: Vec::new(),
+                    kwargs: Vec::new(),
+                    target_var: Some("foo".to_string()),
+                },
+                SimpleTag {
+                    func,
+                    at,
+                    takes_context,
+                    args: Vec::new(),
+                    kwargs: Vec::new(),
+                    target_var: Some("foo".to_string()),
+                },
             );
         })
     }
