@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::iter::Peekable;
 use std::sync::Arc;
 
@@ -25,7 +25,9 @@ use crate::lex::START_TAG_LEN;
 use crate::lex::autoescape::{AutoescapeEnabled, AutoescapeError, lex_autoescape_argument};
 use crate::lex::common::{LexerError, text_content_at, translated_text_content_at};
 use crate::lex::core::{Lexer, TokenType};
-use crate::lex::custom_tag::{SimpleTagLexer, SimpleTagLexerError, SimpleTagToken, SimpleTagTokenType};
+use crate::lex::custom_tag::{
+    SimpleTagLexer, SimpleTagLexerError, SimpleTagToken, SimpleTagTokenType,
+};
 use crate::lex::forloop::{ForLexer, ForLexerError, ForLexerInError, ForTokenType};
 use crate::lex::ifcondition::{
     IfConditionAtom, IfConditionLexer, IfConditionOperator, IfConditionTokenType,
@@ -177,7 +179,9 @@ impl SimpleTagToken {
         match self.token_type {
             SimpleTagTokenType::Numeric => parse_numeric(content, self.at),
             SimpleTagTokenType::Text => Ok(TagElement::Text(Text::new(content_at))),
-            SimpleTagTokenType::TranslatedText => Ok(TagElement::TranslatedText(Text::new(content_at))),
+            SimpleTagTokenType::TranslatedText => {
+                Ok(TagElement::TranslatedText(Text::new(content_at)))
+            }
             SimpleTagTokenType::Variable => parser.parse_variable(content, content_at, start),
         }
     }
@@ -674,6 +678,13 @@ pub enum ParseError {
         #[label("here")]
         at: SourceSpan,
     },
+    #[error("'{tag_name}' did not receive value(s) for the argument(s): {missing}")]
+    MissingPositionalArguments {
+        tag_name: String,
+        missing: String,
+        #[label("here")]
+        at: SourceSpan,
+    },
     #[error("Unexpected positional argument after keyword argument")]
     PositionalAfterKeyword {
         #[label("this positional argument")]
@@ -1065,7 +1076,7 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
         params: Vec<String>,
         varargs: Option<String>,
         varkw: bool,
-        defaults: Vec<Bound<'_, PyAny>>,
+        defaults_count: usize,
         kwonly: Vec<String>,
         kwonly_defaults: HashMap<String, Bound<'_, PyAny>>,
         takes_context: bool,
@@ -1075,23 +1086,26 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
         let mut kwargs = Vec::new();
         let target_var = None;
 
-        let mut prev_at = parts.at.clone();
-        let mut seen_kwarg = false;
+        let parts_at = parts.at;
+        let mut prev_at = parts.at;
+        let mut seen_kwargs = HashSet::new();
         let params_count = params.len();
         let lexer = SimpleTagLexer::new(self.template, parts);
         for (index, token) in lexer.enumerate() {
             let token = token?;
             match token.kwarg {
-                None => match seen_kwarg {
-                    false => {
+                None => match seen_kwargs.is_empty() {
+                    true => {
                         if index == params_count {
-                            return Err(ParseError::TooManyPositionalArguments { at: token.at.into() });
+                            return Err(ParseError::TooManyPositionalArguments {
+                                at: token.at.into(),
+                            });
                         }
                         let element = token.parse(self)?;
                         args.push(element);
                         prev_at = token.at;
                     }
-                    true => {
+                    false => {
                         return Err(ParseError::PositionalAfterKeyword {
                             at: token.at.into(),
                             after: prev_at.into(),
@@ -1099,7 +1113,6 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
                     }
                 },
                 Some(name_at) => {
-                    seen_kwarg = true;
                     let kwarg_at = (name_at.0, name_at.1 + 1 + token.at.1);
                     let name = self.template.content(name_at);
                     if !varkw
@@ -1111,12 +1124,32 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
                         });
                     }
                     let element = token.parse(self)?;
+                    seen_kwargs.insert(name);
                     kwargs.push((name.to_string(), element));
                     prev_at = kwarg_at;
                 }
             }
         }
 
+        let args_count = args.len();
+        if params_count > args_count + defaults_count {
+            let missing_params: Vec<_> = params[args_count..params_count - defaults_count]
+                .iter()
+                .filter(|p| !seen_kwargs.contains(p.as_str()))
+                .collect();
+            if !missing_params.is_empty() {
+                let missing = missing_params
+                    .iter()
+                    .map(|p| format!("'{p}'"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                return Err(ParseError::MissingPositionalArguments {
+                    tag_name: function_name,
+                    at: parts_at.into(),
+                    missing,
+                });
+            }
+        }
         Ok((args, kwargs, target_var))
     }
 
@@ -1130,8 +1163,8 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
         eprintln!("{:?}", context.closure_values);
         let defaults = &context.closure_values[0];
         let defaults = match defaults.is_none() {
-            true => Vec::new(),
-            false => defaults.extract()?,
+            true => 0,
+            false => defaults.len()?,
         };
         let func = context.closure_values[1].clone();
         let function_name = context.closure_values[2].extract()?;

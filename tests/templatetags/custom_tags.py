@@ -10,6 +10,11 @@ def double(value):
 
 
 @register.simple_tag
+def multiply(a, b, c):
+    return a * b * c
+
+
+@register.simple_tag
 def table(**kwargs):
     return "\n".join(f"{k}-{v}" for k, v in kwargs.items())
 

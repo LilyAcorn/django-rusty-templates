@@ -95,3 +95,66 @@ def test_simple_tag_invalid_keyword_argument():
    ·                                                ╰── here
    ╰────
 """
+
+
+def test_simple_tag_missing_argument():
+    template = "{% load double from custom_tags %}{% double %}"
+
+    with pytest.raises(TemplateSyntaxError) as exc_info:
+        engines["django"].from_string(template)
+
+    assert str(exc_info.value) == "'double' did not receive value(s) for the argument(s): 'value'"
+
+    with pytest.raises(TemplateSyntaxError) as exc_info:
+        engines["rusty"].from_string(template)
+
+    assert str(exc_info.value) == """\
+  × 'double' did not receive value(s) for the argument(s): 'value'
+   ╭────
+ 1 │ {% load double from custom_tags %}{% double %}
+   ·                                            ▲
+   ·                                            ╰── here
+   ╰────
+"""
+
+
+def test_simple_tag_missing_arguments():
+    template = "{% load multiply from custom_tags %}{% multiply %}"
+
+    with pytest.raises(TemplateSyntaxError) as exc_info:
+        engines["django"].from_string(template)
+
+    assert str(exc_info.value) == "'multiply' did not receive value(s) for the argument(s): 'a', 'b', 'c'"
+
+    with pytest.raises(TemplateSyntaxError) as exc_info:
+        engines["rusty"].from_string(template)
+
+    assert str(exc_info.value) == """\
+  × 'multiply' did not receive value(s) for the argument(s): 'a', 'b', 'c'
+   ╭────
+ 1 │ {% load multiply from custom_tags %}{% multiply %}
+   ·                                                ▲
+   ·                                                ╰── here
+   ╰────
+"""
+
+
+def test_simple_tag_missing_arguments_with_kwarg():
+    template = "{% load multiply from custom_tags %}{% multiply b=2 %}"
+
+    with pytest.raises(TemplateSyntaxError) as exc_info:
+        engines["django"].from_string(template)
+
+    assert str(exc_info.value) == "'multiply' did not receive value(s) for the argument(s): 'a', 'c'"
+
+    with pytest.raises(TemplateSyntaxError) as exc_info:
+        engines["rusty"].from_string(template)
+
+    assert str(exc_info.value) == """\
+  × 'multiply' did not receive value(s) for the argument(s): 'a', 'c'
+   ╭────
+ 1 │ {% load multiply from custom_tags %}{% multiply b=2 %}
+   ·                                                 ─┬─
+   ·                                                  ╰── here
+   ╰────
+"""
