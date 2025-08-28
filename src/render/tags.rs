@@ -1,4 +1,6 @@
 use std::borrow::Cow;
+use std::collections::VecDeque;
+use std::sync::Arc;
 
 use num_bigint::{BigInt, Sign};
 use num_traits::cast::ToPrimitive;
@@ -6,7 +8,7 @@ use pyo3::exceptions::PyAttributeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDict, PyList, PyNone, PyString, PyTuple};
 
-use super::types::{AsBorrowedContent, Content, Context};
+use super::types::{AsBorrowedContent, Content, Context, PyContext};
 use super::{Evaluate, Render, RenderResult, Resolve, ResolveFailures, ResolveResult};
 use crate::error::{AnnotatePyErr, PyRenderError, RenderError};
 use crate::parse::{For, IfCondition, SimpleTag, Tag, Url};
@@ -30,7 +32,9 @@ fn current_app(py: Python, request: &Option<Py<PyAny>>) -> PyResult<Py<PyAny>> {
         .getattr(py, "resolver_match")
         .ok_or_isinstance_of::<PyAttributeError>(py)?
     {
-        Ok(resolver_match) if !resolver_match.is_none(py) => resolver_match.getattr(py, "namespace"),
+        Ok(resolver_match) if !resolver_match.is_none(py) => {
+            resolver_match.getattr(py, "namespace")
+        }
         _ => Ok(none),
     }
 }
@@ -760,6 +764,22 @@ impl Render for For {
     }
 }
 
+impl SimpleTag {
+    fn call_tag<'t>(
+        &self,
+        py: Python<'_>,
+        template: TemplateString<'t>,
+        args: VecDeque<Bound<'_, PyAny>>,
+        kwargs: Bound<'_, PyDict>,
+    ) -> RenderResult<'t> {
+        let func = self.func.bind(py);
+        match func.call(PyTuple::new(py, args)?, Some(&kwargs)) {
+            Ok(content) => Ok(Cow::Owned(content.to_string())),
+            Err(error) => Err(error.annotate(py, self.at, "here", template).into()),
+        }
+    }
+}
+
 impl Render for SimpleTag {
     fn render<'t>(
         &self,
@@ -767,20 +787,33 @@ impl Render for SimpleTag {
         template: TemplateString<'t>,
         context: &mut Context,
     ) -> RenderResult<'t> {
-        let func = self.func.bind(py);
-        let mut args = Vec::new();
-        let mut kwargs = PyDict::new(py);
+        let mut args = VecDeque::new();
         for arg in &self.args {
-            let arg = arg.resolve(py, template, context, ResolveFailures::Raise)?;
-            args.push(arg);
+            match arg.resolve(py, template, context, ResolveFailures::Raise)? {
+                None => args.push_back(py.None().into_bound(py)),
+                Some(arg) => args.push_back(arg.to_py(py)?),
+            }
         }
+        let kwargs = PyDict::new(py);
         for (key, value) in &self.kwargs {
             let value = value.resolve(py, template, context, ResolveFailures::Raise)?;
             kwargs.set_item(key, value)?;
         }
-        match func.call(PyTuple::new(py, args)?, Some(&kwargs)) {
-            Ok(content) => Ok(Cow::Owned(content.to_string())),
-            Err(error) => Err(error.annotate(py, self.at, "here", template).into()),
+        if self.takes_context {
+            let swapped_context = std::mem::replace(context, Context::empty());
+            let py_context = Bound::new(py, PyContext::new(swapped_context))?.into_any();
+            args.push_front(py_context.clone());
+            let result = self.call_tag(py, template, args, kwargs);
+            let mut extracted_context: PyContext = py_context.extract()?;
+            drop(py_context);
+            std::mem::swap(
+                context,
+                Arc::get_mut(&mut extracted_context.context)
+                    .expect("Should only be one reference to the inner context"),
+            );
+            result
+        } else {
+            self.call_tag(py, template, args, kwargs)
         }
     }
 }

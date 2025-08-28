@@ -46,6 +46,11 @@ def list_items(items, *, header):
     return "\n".join(parts)
 
 
+@register.simple_tag(takes_context=True)
+def request_path(context):
+    return context.request.path
+
+
 #
 #
 # @register.simple_block_tag

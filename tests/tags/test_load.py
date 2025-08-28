@@ -25,6 +25,7 @@ cache
 custom_filters
 custom_tags
 i18n
+invalid_tags
 l10n
 more_filters
 no_filters
@@ -48,6 +49,7 @@ tz"""
         custom_filters
         custom_tags
         i18n
+        invalid_tags
         l10n
         more_filters
         no_filters

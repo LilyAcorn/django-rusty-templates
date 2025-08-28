@@ -678,6 +678,14 @@ pub enum ParseError {
         #[label("here")]
         at: SourceSpan,
     },
+    #[error(
+        "'{name}' is decorated with takes_context=True so it must have a first argument of 'context'"
+    )]
+    RequiresContext {
+        name: String,
+        #[label("loaded here")]
+        at: SourceSpan,
+    },
     #[error("'{tag_name}' did not receive value(s) for the argument(s): {missing}")]
     MissingArguments {
         tag_name: String,
@@ -1209,7 +1217,7 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
 
     fn parse_load(
         &mut self,
-        _at: (usize, usize),
+        at: (usize, usize),
         parts: TagParts,
     ) -> Result<TokenTree, PyParseError> {
         let tokens: Vec<_> = LoadLexer::new(self.template, parts).collect();
@@ -1226,7 +1234,7 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
                     self.external_filters
                         .insert(content.to_string(), filter.clone());
                 } else if let Some(tag) = tags.get(content) {
-                    self.load_tag(content, tag)?;
+                    self.load_tag(token.at, content, tag)?;
                 } else {
                     return Err(ParseError::MissingFilterTag {
                         library: self.template.content(last.at).to_string(),
@@ -1245,13 +1253,18 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
             let tags = self.get_tags(library)?;
             self.external_filters.extend(filters);
             for (name, tag) in &tags {
-                self.load_tag(name, tag)?;
+                self.load_tag(at, name, tag)?;
             }
         }
         Ok(TokenTree::Tag(Tag::Load))
     }
 
-    fn load_tag(&mut self, name: &str, tag: &Bound<'py, PyAny>) -> Result<(), PyParseError> {
+    fn load_tag(
+        &mut self,
+        at: (usize, usize),
+        name: &str,
+        tag: &Bound<'py, PyAny>,
+    ) -> Result<(), PyParseError> {
         let closure = tag.getattr("__closure__")?;
         let tag = if closure.is_none() {
             todo!("Fully custom tag")
@@ -1284,11 +1297,27 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
                         .map(|item| item?.extract())
                         .collect::<Result<_, PyErr>>()?,
                 };
-                let params = closure_values[5].extract()?;
+                let params: Vec<String> = closure_values[5].extract()?;
                 let takes_context = closure_values[6].is_truthy()?;
                 let varargs = !closure_values[7].is_none();
                 let varkw = !closure_values[8].is_none();
 
+                let params = match takes_context {
+                    false => params,
+                    true => {
+                        if let Some(param) = params.first()
+                            && param == "context"
+                        {
+                            params.iter().skip(1).cloned().collect()
+                        } else {
+                            return Err(ParseError::RequiresContext {
+                                name: function_name,
+                                at: at.into(),
+                            }
+                            .into());
+                        }
+                    }
+                };
                 TagContext::SimpleTag(SimpleTagContext {
                     func,
                     function_name,

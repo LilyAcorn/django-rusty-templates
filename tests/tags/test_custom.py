@@ -1,6 +1,7 @@
 import pytest
 from django.template import engines
 from django.template.exceptions import TemplateSyntaxError
+from django.test import RequestFactory
 
 
 def test_simple_tag_double():
@@ -106,6 +107,18 @@ def test_simple_tag_keyword_only():
 * 3"""
     assert django_template.render({"items": [1, 2, 3]}) == expected
     assert rust_template.render({"items": [1, 2, 3]}) == expected
+
+
+def test_simple_tag_takes_context():
+    template = "{% load request_path from custom_tags %}{% request_path %}{{ bar }}"
+
+    django_template = engines["django"].from_string(template)
+    rust_template = engines["rusty"].from_string(template)
+
+    factory = RequestFactory()
+    request = factory.get("/foo/")
+    assert django_template.render({"bar": "bar"}, request) == "/foo/bar"
+    assert rust_template.render({"bar": "bar"}, request) == "/foo/bar"
 
 
 def test_simple_tag_positional_after_kwarg():
@@ -540,6 +553,34 @@ def test_simple_tag_missing_keyword_argument():
  1 │ {% load list from custom_tags %}{% list %}
    ·                                        ▲
    ·                                        ╰── here
+   ╰────
+"""
+    assert str(exc_info.value) == expected
+
+
+def test_simple_tag_missing_context():
+    template = "{% load missing_context from invalid_tags %}{% missing_context %}"
+
+    with pytest.raises(TemplateSyntaxError) as exc_info:
+        engines["django"].from_string(template)
+
+    assert (
+        str(exc_info.value)
+        == "'missing_context' is decorated with takes_context=True so it must have a first argument of 'context'"
+    )
+
+    with pytest.raises(TemplateSyntaxError) as exc_info:
+        engines["rusty"].from_string(template)
+
+    assert (
+        str(exc_info.value)
+        == """\
+  × 'missing_context' is decorated with takes_context=True so it must have a
+  │ first argument of 'context'
+   ╭────
+ 1 │ {% load missing_context from invalid_tags %}{% missing_context %}
+   ·         ───────┬───────
+   ·                ╰── loaded here
    ╰────
 """
     )
