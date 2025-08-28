@@ -114,12 +114,17 @@ def test_simple_tag_positional_after_kwarg():
     with pytest.raises(TemplateSyntaxError) as exc_info:
         engines["django"].from_string(template)
 
-    assert str(exc_info.value) == "'double' received some positional argument(s) after some keyword argument(s)"
+    assert (
+        str(exc_info.value)
+        == "'double' received some positional argument(s) after some keyword argument(s)"
+    )
 
     with pytest.raises(TemplateSyntaxError) as exc_info:
         engines["rusty"].from_string(template)
 
-    assert str(exc_info.value) == """\
+    assert (
+        str(exc_info.value)
+        == """\
   × Unexpected positional argument after keyword argument
    ╭────
  1 │ {% load double from custom_tags %}{% double value=3 foo %}
@@ -128,6 +133,7 @@ def test_simple_tag_positional_after_kwarg():
    ·                                                ╰── after this keyword argument
    ╰────
 """
+    )
 
 
 def test_simple_tag_too_many_positional_arguments():
@@ -141,7 +147,9 @@ def test_simple_tag_too_many_positional_arguments():
     with pytest.raises(TemplateSyntaxError) as exc_info:
         engines["rusty"].from_string(template)
 
-    assert str(exc_info.value) == """\
+    assert (
+        str(exc_info.value)
+        == """\
   × Unexpected positional argument
    ╭────
  1 │ {% load double from custom_tags %}{% double value foo %}
@@ -149,6 +157,7 @@ def test_simple_tag_too_many_positional_arguments():
    ·                                                    ╰── here
    ╰────
 """
+    )
 
 
 def test_simple_tag_invalid_keyword_argument():
@@ -162,7 +171,9 @@ def test_simple_tag_invalid_keyword_argument():
     with pytest.raises(TemplateSyntaxError) as exc_info:
         engines["rusty"].from_string(template)
 
-    assert str(exc_info.value) == """\
+    assert (
+        str(exc_info.value)
+        == """\
   × Unexpected keyword argument
    ╭────
  1 │ {% load double from custom_tags %}{% double foo=bar %}
@@ -170,6 +181,7 @@ def test_simple_tag_invalid_keyword_argument():
    ·                                                ╰── here
    ╰────
 """
+    )
 
 
 def test_simple_tag_missing_argument():
@@ -178,12 +190,17 @@ def test_simple_tag_missing_argument():
     with pytest.raises(TemplateSyntaxError) as exc_info:
         engines["django"].from_string(template)
 
-    assert str(exc_info.value) == "'double' did not receive value(s) for the argument(s): 'value'"
+    assert (
+        str(exc_info.value)
+        == "'double' did not receive value(s) for the argument(s): 'value'"
+    )
 
     with pytest.raises(TemplateSyntaxError) as exc_info:
         engines["rusty"].from_string(template)
 
-    assert str(exc_info.value) == """\
+    assert (
+        str(exc_info.value)
+        == """\
   × 'double' did not receive value(s) for the argument(s): 'value'
    ╭────
  1 │ {% load double from custom_tags %}{% double %}
@@ -191,6 +208,7 @@ def test_simple_tag_missing_argument():
    ·                                            ╰── here
    ╰────
 """
+    )
 
 
 def test_simple_tag_missing_arguments():
@@ -199,12 +217,17 @@ def test_simple_tag_missing_arguments():
     with pytest.raises(TemplateSyntaxError) as exc_info:
         engines["django"].from_string(template)
 
-    assert str(exc_info.value) == "'multiply' did not receive value(s) for the argument(s): 'a', 'b', 'c'"
+    assert (
+        str(exc_info.value)
+        == "'multiply' did not receive value(s) for the argument(s): 'a', 'b', 'c'"
+    )
 
     with pytest.raises(TemplateSyntaxError) as exc_info:
         engines["rusty"].from_string(template)
 
-    assert str(exc_info.value) == """\
+    assert (
+        str(exc_info.value)
+        == """\
   × 'multiply' did not receive value(s) for the argument(s): 'a', 'b', 'c'
    ╭────
  1 │ {% load multiply from custom_tags %}{% multiply %}
@@ -212,6 +235,7 @@ def test_simple_tag_missing_arguments():
    ·                                                ╰── here
    ╰────
 """
+    )
 
 
 def test_simple_tag_missing_arguments_with_kwarg():
@@ -220,12 +244,17 @@ def test_simple_tag_missing_arguments_with_kwarg():
     with pytest.raises(TemplateSyntaxError) as exc_info:
         engines["django"].from_string(template)
 
-    assert str(exc_info.value) == "'multiply' did not receive value(s) for the argument(s): 'a', 'c'"
+    assert (
+        str(exc_info.value)
+        == "'multiply' did not receive value(s) for the argument(s): 'a', 'c'"
+    )
 
     with pytest.raises(TemplateSyntaxError) as exc_info:
         engines["rusty"].from_string(template)
 
-    assert str(exc_info.value) == """\
+    assert (
+        str(exc_info.value)
+        == """\
   × 'multiply' did not receive value(s) for the argument(s): 'a', 'c'
    ╭────
  1 │ {% load multiply from custom_tags %}{% multiply b=2 %}
@@ -233,6 +262,7 @@ def test_simple_tag_missing_arguments_with_kwarg():
    ·                                                  ╰── here
    ╰────
 """
+    )
 
 
 def test_simple_tag_duplicate_keyword_arguments():
@@ -241,12 +271,17 @@ def test_simple_tag_duplicate_keyword_arguments():
     with pytest.raises(TemplateSyntaxError) as exc_info:
         engines["django"].from_string(template)
 
-    assert str(exc_info.value) == "'multiply' received multiple values for keyword argument 'b'"
+    assert (
+        str(exc_info.value)
+        == "'multiply' received multiple values for keyword argument 'b'"
+    )
 
     with pytest.raises(TemplateSyntaxError) as exc_info:
         engines["rusty"].from_string(template)
 
-    assert str(exc_info.value) == """\
+    assert (
+        str(exc_info.value)
+        == """\
   × 'multiply' received multiple values for keyword argument 'b'
    ╭────
  1 │ {% load multiply from custom_tags %}{% multiply a=1 b=2 c=3 b=4 %}
@@ -255,6 +290,7 @@ def test_simple_tag_duplicate_keyword_arguments():
    ·                                                      ╰── first
    ╰────
 """
+    )
 
 
 def test_simple_tag_keyword_as_multiple_variables():
@@ -263,12 +299,17 @@ def test_simple_tag_keyword_as_multiple_variables():
     with pytest.raises(TemplateSyntaxError) as exc_info:
         engines["django"].from_string(template)
 
-    assert str(exc_info.value) == "'double' received some positional argument(s) after some keyword argument(s)"
+    assert (
+        str(exc_info.value)
+        == "'double' received some positional argument(s) after some keyword argument(s)"
+    )
 
     with pytest.raises(TemplateSyntaxError) as exc_info:
         engines["rusty"].from_string(template)
 
-    assert str(exc_info.value) == """\
+    assert (
+        str(exc_info.value)
+        == """\
   × Unexpected positional argument after keyword argument
    ╭────
  1 │ {% load double from custom_tags %}{% double value=1 as foo bar %}
@@ -277,6 +318,7 @@ def test_simple_tag_keyword_as_multiple_variables():
    ·                                                ╰── after this keyword argument
    ╰────
 """
+    )
 
 
 def test_simple_tag_positional_as_multiple_variables():
@@ -290,7 +332,9 @@ def test_simple_tag_positional_as_multiple_variables():
     with pytest.raises(TemplateSyntaxError) as exc_info:
         engines["rusty"].from_string(template)
 
-    assert str(exc_info.value) == """\
+    assert (
+        str(exc_info.value)
+        == """\
   × Unexpected positional argument
    ╭────
  1 │ {% load double from custom_tags %}{% double value as foo bar %}
@@ -298,6 +342,7 @@ def test_simple_tag_positional_as_multiple_variables():
    ·                                                    ╰── here
    ╰────
 """
+    )
 
 
 def test_simple_tag_positional_as_multiple_variables_with_default():
@@ -311,7 +356,9 @@ def test_simple_tag_positional_as_multiple_variables_with_default():
     with pytest.raises(TemplateSyntaxError) as exc_info:
         engines["rusty"].from_string(template)
 
-    assert str(exc_info.value) == """\
+    assert (
+        str(exc_info.value)
+        == """\
   × Unexpected positional argument
    ╭────
  1 │ {% load invert from custom_tags %}{% invert as foo bar %}
@@ -319,6 +366,7 @@ def test_simple_tag_positional_as_multiple_variables_with_default():
    ·                                                 ╰── here
    ╰────
 """
+    )
 
 
 def test_simple_tag_keyword_missing_target_variable():
@@ -327,12 +375,17 @@ def test_simple_tag_keyword_missing_target_variable():
     with pytest.raises(TemplateSyntaxError) as exc_info:
         engines["django"].from_string(template)
 
-    assert str(exc_info.value) == "'double' received some positional argument(s) after some keyword argument(s)"
+    assert (
+        str(exc_info.value)
+        == "'double' received some positional argument(s) after some keyword argument(s)"
+    )
 
     with pytest.raises(TemplateSyntaxError) as exc_info:
         engines["rusty"].from_string(template)
 
-    assert str(exc_info.value) == """\
+    assert (
+        str(exc_info.value)
+        == """\
   × Unexpected positional argument after keyword argument
    ╭────
  1 │ {% load double from custom_tags %}{% double value=1 as %}
@@ -341,6 +394,7 @@ def test_simple_tag_keyword_missing_target_variable():
    ·                                                ╰── after this keyword argument
    ╰────
 """
+    )
 
 
 def test_simple_tag_positional_missing_target_variable():
@@ -354,7 +408,9 @@ def test_simple_tag_positional_missing_target_variable():
     with pytest.raises(TemplateSyntaxError) as exc_info:
         engines["rusty"].from_string(template)
 
-    assert str(exc_info.value) == """\
+    assert (
+        str(exc_info.value)
+        == """\
   × Unexpected positional argument
    ╭────
  1 │ {% load double from custom_tags %}{% double value as %}
@@ -362,6 +418,7 @@ def test_simple_tag_positional_missing_target_variable():
    ·                                                    ╰── here
    ╰────
 """
+    )
 
 
 def test_simple_tag_incomplete_keyword_argument():
@@ -375,7 +432,9 @@ def test_simple_tag_incomplete_keyword_argument():
     with pytest.raises(TemplateSyntaxError) as exc_info:
         engines["rusty"].from_string(template)
 
-    assert str(exc_info.value) == """\
+    assert (
+        str(exc_info.value)
+        == """\
   × Incomplete keyword argument
    ╭────
  1 │ {% load double from custom_tags %}{% double value= %}
@@ -383,6 +442,7 @@ def test_simple_tag_incomplete_keyword_argument():
    ·                                                ╰── here
    ╰────
 """
+    )
 
 
 def test_simple_tag_invalid_filter():
@@ -396,7 +456,9 @@ def test_simple_tag_invalid_filter():
     with pytest.raises(TemplateSyntaxError) as exc_info:
         engines["rusty"].from_string(template)
 
-    assert str(exc_info.value) == """\
+    assert (
+        str(exc_info.value)
+        == """\
   × Invalid filter: 'bar'
    ╭────
  1 │ {% load double from custom_tags %}{% double foo|bar %}
@@ -404,6 +466,7 @@ def test_simple_tag_invalid_filter():
    ·                                                  ╰── here
    ╰────
 """
+    )
 
 
 def test_simple_tag_invalid_filter_in_keyword_argument():
@@ -417,7 +480,9 @@ def test_simple_tag_invalid_filter_in_keyword_argument():
     with pytest.raises(TemplateSyntaxError) as exc_info:
         engines["rusty"].from_string(template)
 
-    assert str(exc_info.value) == """\
+    assert (
+        str(exc_info.value)
+        == """\
   × Invalid filter: 'bar'
    ╭────
  1 │ {% load double from custom_tags %}{% double value=foo|bar %}
@@ -425,6 +490,7 @@ def test_simple_tag_invalid_filter_in_keyword_argument():
    ·                                                        ╰── here
    ╰────
 """
+    )
 
 
 def test_simple_tag_render_error():
@@ -441,7 +507,9 @@ def test_simple_tag_render_error():
     with pytest.raises(RuntimeError) as exc_info:
         rust_template.render({})
 
-    assert str(exc_info.value) == """\
+    assert (
+        str(exc_info.value)
+        == """\
   × Unknown operation
    ╭────
  1 │ {% load custom_tags %}{% combine operation='divide' %}
@@ -449,6 +517,7 @@ def test_simple_tag_render_error():
    ·                                       ╰── here
    ╰────
 """
+    )
 
 
 def test_simple_tag_missing_keyword_argument():
@@ -457,12 +526,15 @@ def test_simple_tag_missing_keyword_argument():
     with pytest.raises(TemplateSyntaxError) as exc_info:
         engines["django"].from_string(template)
 
-    assert str(exc_info.value) == "'list' did not receive value(s) for the argument(s): 'items', 'header'"
+    assert (
+        str(exc_info.value)
+        == "'list' did not receive value(s) for the argument(s): 'items', 'header'"
+    )
 
     with pytest.raises(TemplateSyntaxError) as exc_info:
         engines["rusty"].from_string(template)
 
-    assert str(exc_info.value) == """\
+    expected = """\
   × 'list' did not receive value(s) for the argument(s): 'items', 'header'
    ╭────
  1 │ {% load list from custom_tags %}{% list %}
@@ -470,3 +542,4 @@ def test_simple_tag_missing_keyword_argument():
    ·                                        ╰── here
    ╰────
 """
+    )
