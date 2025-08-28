@@ -801,8 +801,15 @@ impl LoadToken {
 
 #[derive(Clone)]
 struct SimpleTagContext<'py> {
-    closure_names: Vec<String>,
-    closure_values: Vec<Bound<'py, PyAny>>,
+    func: Bound<'py, PyAny>,
+    function_name: String,
+    takes_context: bool,
+    params: Vec<String>,
+    defaults_count: usize,
+    varargs: bool,
+    kwonly: Vec<String>,
+    kwonly_defaults: HashSet<String>,
+    varkw: bool,
 }
 
 #[derive(Clone)]
@@ -1082,14 +1089,7 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
     fn parse_custom_tag_parts(
         &self,
         parts: TagParts,
-        params: Vec<String>,
-        varargs: bool,
-        varkw: bool,
-        defaults_count: usize,
-        kwonly: Vec<String>,
-        kwonly_defaults: HashSet<String>,
-        takes_context: bool,
-        function_name: String,
+        context: &SimpleTagContext,
     ) -> Result<(Vec<TagElement>, Vec<(String, TagElement)>, Option<String>), ParseError> {
         let mut args = Vec::new();
         let mut kwargs = Vec::new();
@@ -1097,7 +1097,7 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
         let parts_at = parts.at;
         let mut prev_at = parts.at;
         let mut seen_kwargs: HashMap<&str, (usize, usize)> = HashMap::new();
-        let params_count = params.len();
+        let params_count = context.params.len();
         let mut tokens =
             SimpleTagLexer::new(self.template, parts).collect::<Result<Vec<_>, _>>()?;
         let tokens_count = tokens.len();
@@ -1115,7 +1115,7 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
                 None => {
                     match seen_kwargs.is_empty() {
                         true => {
-                            if !varargs && index == params_count {
+                            if !context.varargs && index == params_count {
                                 return Err(ParseError::TooManyPositionalArguments {
                                     at: token.at.into(),
                                 });
@@ -1135,16 +1135,16 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
                 Some(name_at) => {
                     let kwarg_at = (name_at.0, name_at.1 + 1 + token.at.1);
                     let name = self.template.content(name_at);
-                    if !varkw
-                        && !params.iter().any(|a| a == name)
-                        && !kwonly.iter().any(|kw| kw == name)
+                    if !context.varkw
+                        && !context.params.iter().any(|a| a == name)
+                        && !context.kwonly.iter().any(|kw| kw == name)
                     {
                         return Err(ParseError::UnexpectedKeywordArgument {
                             at: kwarg_at.into(),
                         });
                     } else if let Some(&first_at) = seen_kwargs.get(name) {
                         return Err(ParseError::DuplicateKeywordArgument {
-                            tag_name: function_name,
+                            tag_name: context.function_name.clone(),
                             kwarg_name: name.to_string(),
                             first_at: first_at.into(),
                             second_at: kwarg_at.into(),
@@ -1160,16 +1160,16 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
 
         let args_count = args.len();
         let mut missing_params = Vec::new();
-        if params_count > args_count + defaults_count {
-            for param in &params[args_count..params_count - defaults_count] {
+        if params_count > args_count + context.defaults_count {
+            for param in &context.params[args_count..params_count - context.defaults_count] {
                 if !seen_kwargs.contains_key(param.as_str()) {
                     missing_params.push(param.clone());
                 }
             }
         }
-        for kwarg in kwonly {
+        for kwarg in &context.kwonly {
             if !seen_kwargs.contains_key(kwarg.as_str())
-                && !kwonly_defaults.contains(kwarg.as_str())
+                && !context.kwonly_defaults.contains(kwarg.as_str())
             {
                 missing_params.push(kwarg.clone());
             }
@@ -1181,7 +1181,7 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
                 .collect::<Vec<_>>()
                 .join(", ");
             return Err(ParseError::MissingArguments {
-                tag_name: function_name,
+                tag_name: context.function_name.clone(),
                 at: parts_at.into(),
                 missing,
             });
@@ -1195,44 +1195,11 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
         at: (usize, usize),
         parts: TagParts,
     ) -> Result<TokenTree, PyParseError> {
-        eprintln!("{:?}", context.closure_names);
-        eprintln!("{:?}", context.closure_values);
-        let defaults = &context.closure_values[0];
-        let defaults = match defaults.is_none() {
-            true => 0,
-            false => defaults.len()?,
-        };
-        let func = context.closure_values[1].clone();
-        let function_name = context.closure_values[2].extract()?;
-        let kwonly = context.closure_values[3].extract()?;
-        let kwonly_defaults = &context.closure_values[4];
-        let kwonly_defaults = match kwonly_defaults.is_none() {
-            true => HashSet::new(),
-            false => kwonly_defaults
-                .try_iter()?
-                .map(|item| item?.extract())
-                .collect::<Result<_, PyErr>>()?,
-        };
-        let params = context.closure_values[5].extract()?;
-        let takes_context = context.closure_values[6].is_truthy()?;
-        let varargs = !context.closure_values[7].is_none();
-        let varkw = !context.closure_values[8].is_none();
-
-        let (args, kwargs, target_var) = self.parse_custom_tag_parts(
-            parts,
-            params,
-            varargs,
-            varkw,
-            defaults,
-            kwonly,
-            kwonly_defaults,
-            takes_context,
-            function_name,
-        )?;
+        let (args, kwargs, target_var) = self.parse_custom_tag_parts(parts, context)?;
         let tag = SimpleTag {
-            func: func.unbind().into(),
+            func: context.func.clone().unbind().into(),
             at,
-            takes_context,
+            takes_context: context.takes_context,
             args,
             kwargs,
             target_var,
@@ -1301,9 +1268,37 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
             } else if closure_names.contains(&"end_name".to_string()) {
                 todo!("Simple block tag")
             } else {
+                let defaults = &closure_values[0];
+                let defaults_count = match defaults.is_none() {
+                    true => 0,
+                    false => defaults.len()?,
+                };
+                let func = closure_values[1].clone();
+                let function_name = closure_values[2].extract()?;
+                let kwonly = closure_values[3].extract()?;
+                let kwonly_defaults = &closure_values[4];
+                let kwonly_defaults = match kwonly_defaults.is_none() {
+                    true => HashSet::new(),
+                    false => kwonly_defaults
+                        .try_iter()?
+                        .map(|item| item?.extract())
+                        .collect::<Result<_, PyErr>>()?,
+                };
+                let params = closure_values[5].extract()?;
+                let takes_context = closure_values[6].is_truthy()?;
+                let varargs = !closure_values[7].is_none();
+                let varkw = !closure_values[8].is_none();
+
                 TagContext::SimpleTag(SimpleTagContext {
-                    closure_names,
-                    closure_values,
+                    func,
+                    function_name,
+                    takes_context,
+                    params,
+                    defaults_count,
+                    varargs,
+                    kwonly,
+                    kwonly_defaults,
+                    varkw,
                 })
             }
         };
