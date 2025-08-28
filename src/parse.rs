@@ -1271,8 +1271,7 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
         } else {
             let tag_code = tag.getattr("__code__")?;
             let closure_names: Vec<String> = tag_code.getattr("co_freevars")?.extract()?;
-            let closure_values = tag
-                .getattr("__closure__")?
+            let closure_values = closure
                 .try_iter()?
                 .map(|v| v?.getattr("cell_contents"))
                 .collect::<Result<Vec<_>, _>>()?;
