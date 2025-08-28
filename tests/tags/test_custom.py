@@ -121,6 +121,18 @@ def test_simple_tag_takes_context():
     assert rust_template.render({"bar": "bar"}, request) == "/foo/bar"
 
 
+def test_simple_tag_takes_context_context_reference_held():
+    template = "{% load request_path from invalid_tags %}{% request_path %}{{ bar }}"
+
+    django_template = engines["django"].from_string(template)
+    rust_template = engines["rusty"].from_string(template)
+
+    factory = RequestFactory()
+    request = factory.get("/foo/")
+    assert django_template.render({"bar": "bar"}, request) == "/foo/bar"
+    assert rust_template.render({"bar": "bar"}, request) == "/foo/bar"
+
+
 def test_simple_tag_positional_after_kwarg():
     template = "{% load double from custom_tags %}{% double value=3 foo %}"
 

@@ -15,7 +15,7 @@ use crate::error::{AnnotatePyErr, PyRenderError, RenderError};
 use crate::types::TemplateString;
 use crate::utils::PyResultMethods;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ForLoop {
     count: usize,
     len: usize,
@@ -76,6 +76,19 @@ impl Context {
             context: HashMap::new(),
             autoescape: false,
             loops: Vec::new(),
+        }
+    }
+
+    pub fn clone_ref(&self, py: Python<'_>) -> Self {
+        Self {
+            request: self.request.as_ref().map(|v| v.clone_ref(py)),
+            context: self
+                .context
+                .iter()
+                .map(|(k, v)| (k.clone(), v.iter().map(|v| v.clone_ref(py)).collect()))
+                .collect(),
+            autoescape: self.autoescape,
+            loops: self.loops.clone(),
         }
     }
 

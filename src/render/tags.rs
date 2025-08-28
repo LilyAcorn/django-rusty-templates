@@ -800,17 +800,37 @@ impl Render for SimpleTag {
             kwargs.set_item(key, value)?;
         }
         if self.takes_context {
+            // Take ownership of `context` so we can pass it to Python.
+            // The `context` variable now points to an empty `Context` instance which will not be
+            // used except as a placeholder.
             let swapped_context = std::mem::replace(context, Context::empty());
+
+            // Wrap the context as a Python object and add it to the call args
             let py_context = Bound::new(py, PyContext::new(swapped_context))?.into_any();
             args.push_front(py_context.clone());
+
+            // Actually call the tag
             let result = self.call_tag(py, template, args, kwargs);
-            let mut extracted_context: PyContext = py_context.extract()?;
+
+            // Retrieve the PyContext wrapper from Python
+            let extracted_context: PyContext = py_context
+                .extract()
+                .expect("The type of py_context should not have changed");
+            // Ensure we only hold one reference in Rust by dropping the Python object.
             drop(py_context);
-            std::mem::swap(
-                context,
-                Arc::get_mut(&mut extracted_context.context)
-                    .expect("Should only be one reference to the inner context"),
-            );
+
+            // Try to remove the Context from the PyContext
+            let inner_context = match Arc::try_unwrap(extracted_context.context) {
+                // Fast path when we have the only reference in the Arc.
+                Ok(inner_context) => inner_context,
+                // Slow path when Python has held on to the context for some reason.
+                // We can still do the right thing by cloning.
+                Err(inner_context) => inner_context.clone_ref(py),
+            };
+            // Put the Context back in `context`
+            let _ = std::mem::replace(context, inner_context);
+
+            // Return the result of calling the tag
             result
         } else {
             self.call_tag(py, template, args, kwargs)
