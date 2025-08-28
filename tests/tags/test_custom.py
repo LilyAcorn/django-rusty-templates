@@ -24,6 +24,16 @@ def test_simple_tag_double_kwarg():
     assert rust_template.render({}) == "6"
 
 
+def test_simple_tag_double_missing_variable():
+    template = "{% load double from custom_tags %}{% double foo %}"
+
+    django_template = engines["django"].from_string(template)
+    rust_template = engines["rusty"].from_string(template)
+
+    assert django_template.render({}) == ""
+    assert rust_template.render({}) == ""
+
+
 def test_simple_tag_kwargs():
     template = "{% load table from custom_tags %}{% table foo='bar' spam=1 %}"
 

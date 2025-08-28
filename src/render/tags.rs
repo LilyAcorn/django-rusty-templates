@@ -790,7 +790,7 @@ impl Render for SimpleTag {
         let mut args = VecDeque::new();
         for arg in &self.args {
             match arg.resolve(py, template, context, ResolveFailures::Raise)? {
-                None => args.push_back(py.None().into_bound(py)),
+                None => return Ok(Cow::Borrowed("")),
                 Some(arg) => args.push_back(arg.to_py(py)?),
             }
         }
