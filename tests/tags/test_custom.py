@@ -1,5 +1,6 @@
 import pytest
 from django.template import engines
+from django.template.base import VariableDoesNotExist
 from django.template.exceptions import TemplateSyntaxError
 from django.test import RequestFactory
 
@@ -553,6 +554,60 @@ def test_simple_tag_render_error():
    ╰────
 """
     )
+
+
+def test_simple_tag_argument_error():
+    template = "{% load double from custom_tags %}{% double foo|default:bar %}"
+
+    django_template = engines["django"].from_string(template)
+    rust_template = engines["rusty"].from_string(template)
+
+    with pytest.raises(VariableDoesNotExist) as exc_info:
+        django_template.render({})
+
+    expected = "Failed lookup for key [bar] in [{'True': True, 'False': False, 'None': None}, {}]"
+    assert str(exc_info.value) == expected
+
+    with pytest.raises(VariableDoesNotExist) as exc_info:
+        rust_template.render({})
+
+    expected = """\
+  × Failed lookup for key [bar] in {"False": False, "None": None, "True":
+  │ True}
+   ╭────
+ 1 │ {% load double from custom_tags %}{% double foo|default:bar %}
+   ·                                                         ─┬─
+   ·                                                          ╰── key
+   ╰────
+"""
+    assert str(exc_info.value) == expected
+
+
+def test_simple_tag_keyword_argument_error():
+    template = "{% load double from custom_tags %}{% double value=foo|default:bar %}"
+
+    django_template = engines["django"].from_string(template)
+    rust_template = engines["rusty"].from_string(template)
+
+    with pytest.raises(VariableDoesNotExist) as exc_info:
+        django_template.render({})
+
+    expected = "Failed lookup for key [bar] in [{'True': True, 'False': False, 'None': None}, {}]"
+    assert str(exc_info.value) == expected
+
+    with pytest.raises(VariableDoesNotExist) as exc_info:
+        rust_template.render({})
+
+    expected = """\
+  × Failed lookup for key [bar] in {"False": False, "None": None, "True":
+  │ True}
+   ╭────
+ 1 │ {% load double from custom_tags %}{% double value=foo|default:bar %}
+   ·                                                               ─┬─
+   ·                                                                ╰── key
+   ╰────
+"""
+    assert str(exc_info.value) == expected
 
 
 def test_simple_tag_missing_keyword_argument():

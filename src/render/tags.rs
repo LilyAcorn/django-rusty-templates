@@ -773,7 +773,10 @@ impl SimpleTag {
         kwargs: Bound<'_, PyDict>,
     ) -> RenderResult<'t> {
         let func = self.func.bind(py);
-        match func.call(PyTuple::new(py, args)?, Some(&kwargs)) {
+        match func.call(
+            PyTuple::new(py, args).expect("All arguments should be valid Python objects"),
+            Some(&kwargs),
+        ) {
             Ok(content) => Ok(Cow::Owned(content.to_string())),
             Err(error) => Err(error.annotate(py, self.at, "here", template).into()),
         }
