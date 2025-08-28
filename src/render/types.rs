@@ -2,6 +2,7 @@ use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::iter::zip;
+use std::sync::Arc;
 
 use html_escape::encode_quoted_attribute;
 use num_bigint::{BigInt, ToBigInt};
@@ -14,7 +15,7 @@ use crate::error::{AnnotatePyErr, PyRenderError, RenderError};
 use crate::types::TemplateString;
 use crate::utils::PyResultMethods;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ForLoop {
     count: usize,
     len: usize,
@@ -66,6 +67,28 @@ impl Context {
             context,
             autoescape,
             loops: Vec::new(),
+        }
+    }
+
+    pub fn empty() -> Self {
+        Self {
+            request: None,
+            context: HashMap::new(),
+            autoescape: false,
+            loops: Vec::new(),
+        }
+    }
+
+    pub fn clone_ref(&self, py: Python<'_>) -> Self {
+        Self {
+            request: self.request.as_ref().map(|v| v.clone_ref(py)),
+            context: self
+                .context
+                .iter()
+                .map(|(k, v)| (k.clone(), v.iter().map(|v| v.clone_ref(py)).collect()))
+                .collect(),
+            autoescape: self.autoescape,
+            loops: self.loops.clone(),
         }
     }
 
@@ -221,6 +244,31 @@ impl Context {
             .str()
             .expect("All elements of the dictionary can be converted to a string");
         forloop_str.to_string()
+    }
+}
+
+#[pyclass]
+#[derive(Clone)]
+pub struct PyContext {
+    pub context: Arc<Context>,
+}
+
+impl PyContext {
+    pub fn new(context: Context) -> Self {
+        Self {
+            context: context.into(),
+        }
+    }
+}
+
+#[pymethods]
+impl PyContext {
+    #[getter]
+    fn request<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyAny>> {
+        self.context
+            .request
+            .as_ref()
+            .map(|request| request.bind(py).clone())
     }
 }
 

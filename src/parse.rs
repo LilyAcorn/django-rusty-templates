@@ -1,5 +1,6 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::iter::Peekable;
+use std::sync::Arc;
 
 use either::Either;
 use miette::{Diagnostic, SourceSpan};
@@ -24,13 +25,15 @@ use crate::lex::START_TAG_LEN;
 use crate::lex::autoescape::{AutoescapeEnabled, AutoescapeError, lex_autoescape_argument};
 use crate::lex::common::{LexerError, text_content_at, translated_text_content_at};
 use crate::lex::core::{Lexer, TokenType};
+use crate::lex::custom_tag::{
+    SimpleTagLexer, SimpleTagLexerError, SimpleTagToken, SimpleTagTokenType,
+};
 use crate::lex::forloop::{ForLexer, ForLexerError, ForLexerInError, ForTokenType};
 use crate::lex::ifcondition::{
     IfConditionAtom, IfConditionLexer, IfConditionOperator, IfConditionTokenType,
 };
 use crate::lex::load::{LoadLexer, LoadToken};
 use crate::lex::tag::{TagLexerError, TagParts, lex_tag};
-use crate::lex::url::{UrlLexer, UrlLexerError, UrlToken, UrlTokenType};
 use crate::lex::variable::{
     Argument as ArgumentToken, ArgumentType as ArgumentTokenType, VariableLexerError,
     VariableTokenType, lex_variable,
@@ -168,16 +171,18 @@ fn parse_numeric(content: &str, at: (usize, usize)) -> Result<TagElement, ParseE
     }
 }
 
-impl UrlToken {
+impl SimpleTagToken {
     fn parse(&self, parser: &Parser) -> Result<TagElement, ParseError> {
         let content_at = self.content_at();
         let (start, _len) = content_at;
         let content = parser.template.content(content_at);
         match self.token_type {
-            UrlTokenType::Numeric => parse_numeric(content, self.at),
-            UrlTokenType::Text => Ok(TagElement::Text(Text::new(content_at))),
-            UrlTokenType::TranslatedText => Ok(TagElement::TranslatedText(Text::new(content_at))),
-            UrlTokenType::Variable => parser.parse_variable(content, content_at, start),
+            SimpleTagTokenType::Numeric => parse_numeric(content, self.at),
+            SimpleTagTokenType::Text => Ok(TagElement::Text(Text::new(content_at))),
+            SimpleTagTokenType::TranslatedText => {
+                Ok(TagElement::TranslatedText(Text::new(content_at)))
+            }
+            SimpleTagTokenType::Variable => parser.parse_variable(content, content_at, start),
         }
     }
 }
@@ -425,6 +430,31 @@ pub struct For {
     pub empty: Option<Vec<TokenTree>>,
 }
 
+#[derive(Clone, Debug)]
+pub struct SimpleTag {
+    pub func: Arc<Py<PyAny>>,
+    pub at: (usize, usize),
+    pub takes_context: bool,
+    pub args: Vec<TagElement>,
+    pub kwargs: Vec<(String, TagElement)>,
+    pub target_var: Option<String>,
+}
+
+impl PartialEq for SimpleTag {
+    fn eq(&self, other: &Self) -> bool {
+        // We use `Arc::ptr_eq` here to avoid needing the `py` token for true
+        // equality comparison between two `Py` smart pointers.
+        //
+        // We only use `eq` in tests, so this concession is acceptable here.
+        self.at == other.at
+            && self.takes_context == other.takes_context
+            && self.args == other.args
+            && self.kwargs == other.kwargs
+            && self.target_var == other.target_var
+            && Arc::ptr_eq(&self.func, &other.func)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Tag {
     Autoescape {
@@ -438,6 +468,7 @@ pub enum Tag {
     },
     For(For),
     Load,
+    SimpleTag(SimpleTag),
     Url(Url),
 }
 
@@ -587,7 +618,7 @@ pub enum ParseError {
     },
     #[error(transparent)]
     #[diagnostic(transparent)]
-    UrlLexerError(#[from] UrlLexerError),
+    SimpleTagLexerError(#[from] SimpleTagLexerError),
     #[error(transparent)]
     #[diagnostic(transparent)]
     VariableError(#[from] VariableLexerError),
@@ -644,6 +675,47 @@ pub enum ParseError {
     },
     #[error("'url' view name must be a string or variable, not a number")]
     NumericUrlName {
+        #[label("here")]
+        at: SourceSpan,
+    },
+    #[error(
+        "'{name}' is decorated with takes_context=True so it must have a first argument of 'context'"
+    )]
+    RequiresContext {
+        name: String,
+        #[label("loaded here")]
+        at: SourceSpan,
+    },
+    #[error("'{tag_name}' did not receive value(s) for the argument(s): {missing}")]
+    MissingArguments {
+        tag_name: String,
+        missing: String,
+        #[label("here")]
+        at: SourceSpan,
+    },
+    #[error("'{tag_name}' received multiple values for keyword argument '{kwarg_name}'")]
+    DuplicateKeywordArgument {
+        tag_name: String,
+        kwarg_name: String,
+        #[label("first")]
+        first_at: SourceSpan,
+        #[label("second")]
+        second_at: SourceSpan,
+    },
+    #[error("Unexpected positional argument after keyword argument")]
+    PositionalAfterKeyword {
+        #[label("this positional argument")]
+        at: SourceSpan,
+        #[label("after this keyword argument")]
+        after: SourceSpan,
+    },
+    #[error("Unexpected positional argument")]
+    TooManyPositionalArguments {
+        #[label("here")]
+        at: SourceSpan,
+    },
+    #[error("Unexpected keyword argument")]
+    UnexpectedKeywordArgument {
         #[label("here")]
         at: SourceSpan,
     },
@@ -735,12 +807,30 @@ impl LoadToken {
     }
 }
 
+#[derive(Clone)]
+struct SimpleTagContext<'py> {
+    func: Bound<'py, PyAny>,
+    function_name: String,
+    takes_context: bool,
+    params: Vec<String>,
+    defaults_count: usize,
+    varargs: bool,
+    kwonly: Vec<String>,
+    kwonly_defaults: HashSet<String>,
+    varkw: bool,
+}
+
+#[derive(Clone)]
+enum TagContext<'py> {
+    SimpleTag(SimpleTagContext<'py>),
+}
+
 pub struct Parser<'t, 'l, 'py> {
     py: Python<'py>,
     template: TemplateString<'t>,
     lexer: Lexer<'t>,
     libraries: &'l HashMap<String, Py<PyAny>>,
-    external_tags: HashMap<String, Bound<'py, PyAny>>,
+    external_tags: HashMap<String, TagContext<'py>>,
     external_filters: HashMap<String, Bound<'py, PyAny>>,
     forloop_depth: usize,
 }
@@ -995,13 +1085,139 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
                 at,
                 parts,
             }),
-            tag_name => todo!("{tag_name}"),
+            tag_name => match self.external_tags.get(tag_name) {
+                Some(TagContext::SimpleTag(context)) => {
+                    Either::Left(self.parse_simple_tag(context, at, parts)?)
+                }
+                None => todo!("{tag_name}"),
+            },
         })
+    }
+
+    fn parse_custom_tag_parts(
+        &self,
+        parts: TagParts,
+        context: &SimpleTagContext,
+    ) -> Result<(Vec<TagElement>, Vec<(String, TagElement)>, Option<String>), ParseError> {
+        let mut args = Vec::new();
+        let mut kwargs = Vec::new();
+
+        let parts_at = parts.at;
+        let mut prev_at = parts.at;
+        let mut seen_kwargs: HashMap<&str, (usize, usize)> = HashMap::new();
+        let params_count = context.params.len();
+        let mut tokens =
+            SimpleTagLexer::new(self.template, parts).collect::<Result<Vec<_>, _>>()?;
+        let tokens_count = tokens.len();
+        let target_var =
+            if tokens_count >= 2 && self.template.content(tokens[tokens_count - 2].at) == "as" {
+                let last = tokens.pop().expect("tokens should be length 2 or more");
+                tokens.pop();
+                Some(self.template.content(last.at).to_string())
+            } else {
+                None
+            };
+
+        for (index, token) in tokens.iter().enumerate() {
+            match token.kwarg {
+                None => {
+                    match seen_kwargs.is_empty() {
+                        true => {
+                            if !context.varargs && index == params_count {
+                                return Err(ParseError::TooManyPositionalArguments {
+                                    at: token.at.into(),
+                                });
+                            }
+                            let element = token.parse(self)?;
+                            args.push(element);
+                        }
+                        false => {
+                            return Err(ParseError::PositionalAfterKeyword {
+                                at: token.at.into(),
+                                after: prev_at.into(),
+                            });
+                        }
+                    }
+                    prev_at = token.at;
+                }
+                Some(name_at) => {
+                    let kwarg_at = (name_at.0, name_at.1 + 1 + token.at.1);
+                    let name = self.template.content(name_at);
+                    if !context.varkw
+                        && !context.params.iter().any(|a| a == name)
+                        && !context.kwonly.iter().any(|kw| kw == name)
+                    {
+                        return Err(ParseError::UnexpectedKeywordArgument {
+                            at: kwarg_at.into(),
+                        });
+                    } else if let Some(&first_at) = seen_kwargs.get(name) {
+                        return Err(ParseError::DuplicateKeywordArgument {
+                            tag_name: context.function_name.clone(),
+                            kwarg_name: name.to_string(),
+                            first_at: first_at.into(),
+                            second_at: kwarg_at.into(),
+                        });
+                    }
+                    let element = token.parse(self)?;
+                    seen_kwargs.insert(name, kwarg_at);
+                    kwargs.push((name.to_string(), element));
+                    prev_at = kwarg_at;
+                }
+            }
+        }
+
+        let args_count = args.len();
+        let mut missing_params = Vec::new();
+        if params_count > args_count + context.defaults_count {
+            for param in &context.params[args_count..params_count - context.defaults_count] {
+                if !seen_kwargs.contains_key(param.as_str()) {
+                    missing_params.push(param.clone());
+                }
+            }
+        }
+        for kwarg in &context.kwonly {
+            if !seen_kwargs.contains_key(kwarg.as_str())
+                && !context.kwonly_defaults.contains(kwarg.as_str())
+            {
+                missing_params.push(kwarg.clone());
+            }
+        }
+        if !missing_params.is_empty() {
+            let missing = missing_params
+                .iter()
+                .map(|p| format!("'{p}'"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err(ParseError::MissingArguments {
+                tag_name: context.function_name.clone(),
+                at: parts_at.into(),
+                missing,
+            });
+        }
+        Ok((args, kwargs, target_var))
+    }
+
+    fn parse_simple_tag(
+        &self,
+        context: &SimpleTagContext,
+        at: (usize, usize),
+        parts: TagParts,
+    ) -> Result<TokenTree, PyParseError> {
+        let (args, kwargs, target_var) = self.parse_custom_tag_parts(parts, context)?;
+        let tag = SimpleTag {
+            func: context.func.clone().unbind().into(),
+            at,
+            takes_context: context.takes_context,
+            args,
+            kwargs,
+            target_var,
+        };
+        Ok(TokenTree::Tag(Tag::SimpleTag(tag)))
     }
 
     fn parse_load(
         &mut self,
-        _at: (usize, usize),
+        at: (usize, usize),
         parts: TagParts,
     ) -> Result<TokenTree, PyParseError> {
         let tokens: Vec<_> = LoadLexer::new(self.template, parts).collect();
@@ -1018,7 +1234,7 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
                     self.external_filters
                         .insert(content.to_string(), filter.clone());
                 } else if let Some(tag) = tags.get(content) {
-                    self.external_tags.insert(content.to_string(), tag.clone());
+                    self.load_tag(token.at, content, tag)?;
                 } else {
                     return Err(ParseError::MissingFilterTag {
                         library: self.template.content(last.at).to_string(),
@@ -1036,9 +1252,86 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
             let filters = self.get_filters(library)?;
             let tags = self.get_tags(library)?;
             self.external_filters.extend(filters);
-            self.external_tags.extend(tags);
+            for (name, tag) in &tags {
+                self.load_tag(at, name, tag)?;
+            }
         }
         Ok(TokenTree::Tag(Tag::Load))
+    }
+
+    fn load_tag(
+        &mut self,
+        at: (usize, usize),
+        name: &str,
+        tag: &Bound<'py, PyAny>,
+    ) -> Result<(), PyParseError> {
+        let closure = tag.getattr("__closure__")?;
+        let tag = if closure.is_none() {
+            todo!("Fully custom tag")
+        } else {
+            let tag_code = tag.getattr("__code__")?;
+            let closure_names: Vec<String> = tag_code.getattr("co_freevars")?.extract()?;
+            let closure_values = closure
+                .try_iter()?
+                .map(|v| v?.getattr("cell_contents"))
+                .collect::<Result<Vec<_>, _>>()?;
+            if closure_names.contains(&"filename".to_string()) {
+                todo!("Inclusion tag")
+            } else if closure_names.contains(&"end_name".to_string()) {
+                todo!("Simple block tag")
+            } else {
+                let defaults = &closure_values[0];
+                let defaults_count = match defaults.is_none() {
+                    true => 0,
+                    false => defaults.len()?,
+                };
+                let func = closure_values[1].clone();
+                let function_name = closure_values[2].extract()?;
+                let kwonly = closure_values[3].extract()?;
+                let kwonly_defaults = &closure_values[4];
+                let kwonly_defaults = match kwonly_defaults.is_none() {
+                    true => HashSet::new(),
+                    false => kwonly_defaults
+                        .try_iter()?
+                        .map(|item| item?.extract())
+                        .collect::<Result<_, PyErr>>()?,
+                };
+                let params: Vec<String> = closure_values[5].extract()?;
+                let takes_context = closure_values[6].is_truthy()?;
+                let varargs = !closure_values[7].is_none();
+                let varkw = !closure_values[8].is_none();
+
+                let params = match takes_context {
+                    false => params,
+                    true => {
+                        if let Some(param) = params.first()
+                            && param == "context"
+                        {
+                            params.iter().skip(1).cloned().collect()
+                        } else {
+                            return Err(ParseError::RequiresContext {
+                                name: function_name,
+                                at: at.into(),
+                            }
+                            .into());
+                        }
+                    }
+                };
+                TagContext::SimpleTag(SimpleTagContext {
+                    func,
+                    function_name,
+                    takes_context,
+                    params,
+                    defaults_count,
+                    varargs,
+                    kwonly,
+                    kwonly_defaults,
+                    varkw,
+                })
+            }
+        };
+        self.external_tags.insert(name.to_string(), tag);
+        Ok(())
     }
 
     fn get_tags(
@@ -1056,7 +1349,7 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
     }
 
     fn parse_url(&mut self, at: (usize, usize), parts: TagParts) -> Result<TokenTree, ParseError> {
-        let mut lexer = UrlLexer::new(self.template, parts);
+        let mut lexer = SimpleTagLexer::new(self.template, parts);
         let view_name = match lexer.next() {
             Some(view_token) => view_token?.parse(self)?,
             None => return Err(ParseError::UrlTagNoArguments { at: at.into() }),
@@ -1069,14 +1362,14 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
         let mut rev = tokens.iter().rev();
         let variable = match (rev.next(), rev.next()) {
             (
-                Some(UrlToken {
+                Some(SimpleTagToken {
                     at: last,
-                    token_type: UrlTokenType::Variable,
+                    token_type: SimpleTagTokenType::Variable,
                     ..
                 }),
-                Some(UrlToken {
+                Some(SimpleTagToken {
                     at: prev,
-                    token_type: UrlTokenType::Variable,
+                    token_type: SimpleTagTokenType::Variable,
                     ..
                 }),
             ) => {
@@ -1209,7 +1502,6 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
 mod tests {
     use super::*;
     use pyo3::types::{PyDict, PyDictMethods};
-    use std::sync::Arc;
 
     use crate::lex::common::LexerError;
     use crate::{
@@ -2056,6 +2348,35 @@ mod tests {
                     at: (0, 3),
                     argument_type: ArgumentType::Float(1.0)
                 }))
+            );
+        })
+    }
+
+    #[test]
+    fn test_simple_tag_partial_eq() {
+        pyo3::prepare_freethreaded_python();
+
+        Python::with_gil(|py| {
+            let func: Arc<Py<PyAny>> = PyDict::new(py).into_any().unbind().into();
+            let at = (0, 1);
+            let takes_context = true;
+            assert_eq!(
+                SimpleTag {
+                    func: func.clone(),
+                    at,
+                    takes_context,
+                    args: Vec::new(),
+                    kwargs: Vec::new(),
+                    target_var: Some("foo".to_string()),
+                },
+                SimpleTag {
+                    func,
+                    at,
+                    takes_context,
+                    args: Vec::new(),
+                    kwargs: Vec::new(),
+                    target_var: Some("foo".to_string()),
+                },
             );
         })
     }

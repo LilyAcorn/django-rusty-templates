@@ -10,7 +10,7 @@ use crate::lex::tag::TagParts;
 use crate::types::TemplateString;
 
 #[derive(Debug, PartialEq)]
-pub enum UrlTokenType {
+pub enum SimpleTagTokenType {
     Numeric,
     Text,
     TranslatedText,
@@ -18,25 +18,25 @@ pub enum UrlTokenType {
 }
 
 #[derive(Debug, PartialEq)]
-pub struct UrlToken {
+pub struct SimpleTagToken {
     pub at: (usize, usize),
-    pub token_type: UrlTokenType,
+    pub token_type: SimpleTagTokenType,
     pub kwarg: Option<(usize, usize)>,
 }
 
-impl UrlToken {
+impl SimpleTagToken {
     pub fn content_at(&self) -> (usize, usize) {
         match self.token_type {
-            UrlTokenType::Variable => self.at,
-            UrlTokenType::Numeric => self.at,
-            UrlTokenType::Text => text_content_at(self.at),
-            UrlTokenType::TranslatedText => translated_text_content_at(self.at),
+            SimpleTagTokenType::Variable => self.at,
+            SimpleTagTokenType::Numeric => self.at,
+            SimpleTagTokenType::Text => text_content_at(self.at),
+            SimpleTagTokenType::TranslatedText => translated_text_content_at(self.at),
         }
     }
 }
 
 #[derive(Error, Debug, Diagnostic, PartialEq, Eq)]
-pub enum UrlLexerError {
+pub enum SimpleTagLexerError {
     #[error(transparent)]
     #[diagnostic(transparent)]
     LexerError(#[from] LexerError),
@@ -47,12 +47,12 @@ pub enum UrlLexerError {
     },
 }
 
-pub struct UrlLexer<'t> {
+pub struct SimpleTagLexer<'t> {
     rest: &'t str,
     byte: usize,
 }
 
-impl<'t> UrlLexer<'t> {
+impl<'t> SimpleTagLexer<'t> {
     pub fn new(template: TemplateString<'t>, parts: TagParts) -> Self {
         Self {
             rest: template.content(parts.at),
@@ -60,13 +60,13 @@ impl<'t> UrlLexer<'t> {
         }
     }
 
-    fn lex_numeric(&mut self, kwarg: Option<(usize, usize)>) -> UrlToken {
+    fn lex_numeric(&mut self, kwarg: Option<(usize, usize)>) -> SimpleTagToken {
         let (at, byte, rest) = lex_numeric(self.byte, self.rest);
         self.rest = rest;
         self.byte = byte;
-        UrlToken {
+        SimpleTagToken {
             at,
-            token_type: UrlTokenType::Numeric,
+            token_type: SimpleTagTokenType::Numeric,
             kwarg,
         }
     }
@@ -76,13 +76,13 @@ impl<'t> UrlLexer<'t> {
         chars: &mut std::str::Chars,
         end: char,
         kwarg: Option<(usize, usize)>,
-    ) -> Result<UrlToken, UrlLexerError> {
+    ) -> Result<SimpleTagToken, SimpleTagLexerError> {
         match lex_text(self.byte, self.rest, chars, end) {
             Ok((at, byte, rest)) => {
                 self.rest = rest;
                 self.byte = byte;
-                Ok(UrlToken {
-                    token_type: UrlTokenType::Text,
+                Ok(SimpleTagToken {
+                    token_type: SimpleTagTokenType::Text,
                     at,
                     kwarg,
                 })
@@ -98,13 +98,13 @@ impl<'t> UrlLexer<'t> {
         &mut self,
         chars: &mut std::str::Chars,
         kwarg: Option<(usize, usize)>,
-    ) -> Result<UrlToken, UrlLexerError> {
+    ) -> Result<SimpleTagToken, SimpleTagLexerError> {
         match lex_translated(self.byte, self.rest, chars) {
             Ok((at, byte, rest)) => {
                 self.rest = rest;
                 self.byte = byte;
-                Ok(UrlToken {
-                    token_type: UrlTokenType::TranslatedText,
+                Ok(SimpleTagToken {
+                    token_type: SimpleTagTokenType::TranslatedText,
                     at,
                     kwarg,
                 })
@@ -131,12 +131,12 @@ impl<'t> UrlLexer<'t> {
     fn lex_variable_or_filter(
         &mut self,
         kwarg: Option<(usize, usize)>,
-    ) -> Result<UrlToken, UrlLexerError> {
+    ) -> Result<SimpleTagToken, SimpleTagLexerError> {
         let (at, byte, rest) = lex_variable(self.byte, self.rest);
         self.rest = rest;
         self.byte = byte;
-        Ok(UrlToken {
-            token_type: UrlTokenType::Variable,
+        Ok(SimpleTagToken {
+            token_type: SimpleTagTokenType::Variable,
             at,
             kwarg,
         })
@@ -144,8 +144,8 @@ impl<'t> UrlLexer<'t> {
 
     fn lex_remainder(
         &mut self,
-        token: Result<UrlToken, UrlLexerError>,
-    ) -> Result<UrlToken, UrlLexerError> {
+        token: Result<SimpleTagToken, SimpleTagLexerError>,
+    ) -> Result<SimpleTagToken, SimpleTagLexerError> {
         let remainder = self.rest.next_whitespace();
         match remainder {
             0 => {
@@ -164,8 +164,8 @@ impl<'t> UrlLexer<'t> {
     }
 }
 
-impl Iterator for UrlLexer<'_> {
-    type Item = Result<UrlToken, UrlLexerError>;
+impl Iterator for SimpleTagLexer<'_> {
+    type Item = Result<SimpleTagToken, SimpleTagLexerError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.rest.is_empty() {
@@ -181,7 +181,7 @@ impl Iterator for UrlLexer<'_> {
                 self.rest = "";
                 let at = kwarg.expect("kwarg is Some or we'd already have exited");
                 let at = (at.0, at.1 + 1).into();
-                return Some(Err(UrlLexerError::IncompleteKeywordArgument { at }));
+                return Some(Err(SimpleTagLexerError::IncompleteKeywordArgument { at }));
             }
         };
         let token = match next {
@@ -209,11 +209,11 @@ mod tests {
     fn test_lex_url_name_text() {
         let template = "{% url 'foo' %}";
         let parts = TagParts { at: (7, 5) };
-        let lexer = UrlLexer::new(template.into(), parts);
+        let lexer = SimpleTagLexer::new(template.into(), parts);
         let tokens: Vec<_> = lexer.collect();
-        let name = UrlToken {
+        let name = SimpleTagToken {
             at: (7, 5),
-            token_type: UrlTokenType::Text,
+            token_type: SimpleTagTokenType::Text,
             kwarg: None,
         };
         assert_eq!(tokens, vec![Ok(name)]);
@@ -223,11 +223,11 @@ mod tests {
     fn test_lex_url_name_text_double_quotes() {
         let template = "{% url \"foo\" %}";
         let parts = TagParts { at: (7, 5) };
-        let lexer = UrlLexer::new(template.into(), parts);
+        let lexer = SimpleTagLexer::new(template.into(), parts);
         let tokens: Vec<_> = lexer.collect();
-        let name = UrlToken {
+        let name = SimpleTagToken {
             at: (7, 5),
-            token_type: UrlTokenType::Text,
+            token_type: SimpleTagTokenType::Text,
             kwarg: None,
         };
         assert_eq!(tokens, vec![Ok(name)]);
@@ -237,7 +237,7 @@ mod tests {
     fn test_lex_url_name_text_incomplete() {
         let template = "{% url 'foo %}";
         let parts = TagParts { at: (7, 4) };
-        let mut lexer = UrlLexer::new(template.into(), parts);
+        let mut lexer = SimpleTagLexer::new(template.into(), parts);
         let error = lexer.next().unwrap().unwrap_err();
         assert_eq!(
             error,
@@ -249,11 +249,11 @@ mod tests {
     fn test_lex_url_name_variable() {
         let template = "{% url foo %}";
         let parts = TagParts { at: (7, 3) };
-        let lexer = UrlLexer::new(template.into(), parts);
+        let lexer = SimpleTagLexer::new(template.into(), parts);
         let tokens: Vec<_> = lexer.collect();
-        let name = UrlToken {
+        let name = SimpleTagToken {
             at: (7, 3),
-            token_type: UrlTokenType::Variable,
+            token_type: SimpleTagTokenType::Variable,
             kwarg: None,
         };
         assert_eq!(tokens, vec![Ok(name)]);
@@ -263,11 +263,11 @@ mod tests {
     fn test_lex_url_name_filter() {
         let template = "{% url foo|default:'home' %}";
         let parts = TagParts { at: (7, 18) };
-        let lexer = UrlLexer::new(template.into(), parts);
+        let lexer = SimpleTagLexer::new(template.into(), parts);
         let tokens: Vec<_> = lexer.collect();
-        let name = UrlToken {
+        let name = SimpleTagToken {
             at: (7, 18),
-            token_type: UrlTokenType::Variable,
+            token_type: SimpleTagTokenType::Variable,
             kwarg: None,
         };
         assert_eq!(tokens, vec![Ok(name)]);
@@ -277,11 +277,11 @@ mod tests {
     fn test_lex_url_name_filter_inner_double_quote() {
         let template = "{% url foo|default:'home\"' %}";
         let parts = TagParts { at: (7, 19) };
-        let lexer = UrlLexer::new(template.into(), parts);
+        let lexer = SimpleTagLexer::new(template.into(), parts);
         let tokens: Vec<_> = lexer.collect();
-        let name = UrlToken {
+        let name = SimpleTagToken {
             at: (7, 19),
-            token_type: UrlTokenType::Variable,
+            token_type: SimpleTagTokenType::Variable,
             kwarg: None,
         };
         assert_eq!(tokens, vec![Ok(name)]);
@@ -291,11 +291,11 @@ mod tests {
     fn test_lex_url_name_filter_inner_single_quote() {
         let template = "{% url foo|default:\"home'\" %}";
         let parts = TagParts { at: (7, 19) };
-        let lexer = UrlLexer::new(template.into(), parts);
+        let lexer = SimpleTagLexer::new(template.into(), parts);
         let tokens: Vec<_> = lexer.collect();
-        let name = UrlToken {
+        let name = SimpleTagToken {
             at: (7, 19),
-            token_type: UrlTokenType::Variable,
+            token_type: SimpleTagTokenType::Variable,
             kwarg: None,
         };
         assert_eq!(tokens, vec![Ok(name)]);
@@ -305,11 +305,11 @@ mod tests {
     fn test_lex_url_name_filter_inner_whitespace() {
         let template = "{% url foo|default:'home url' %}";
         let parts = TagParts { at: (7, 22) };
-        let lexer = UrlLexer::new(template.into(), parts);
+        let lexer = SimpleTagLexer::new(template.into(), parts);
         let tokens: Vec<_> = lexer.collect();
-        let name = UrlToken {
+        let name = SimpleTagToken {
             at: (7, 22),
-            token_type: UrlTokenType::Variable,
+            token_type: SimpleTagTokenType::Variable,
             kwarg: None,
         };
         assert_eq!(tokens, vec![Ok(name)]);
@@ -319,11 +319,11 @@ mod tests {
     fn test_lex_url_name_leading_underscore() {
         let template = "{% url _foo %}";
         let parts = TagParts { at: (7, 4) };
-        let lexer = UrlLexer::new(template.into(), parts);
+        let lexer = SimpleTagLexer::new(template.into(), parts);
         let tokens: Vec<_> = lexer.collect();
-        let name = UrlToken {
+        let name = SimpleTagToken {
             at: (7, 4),
-            token_type: UrlTokenType::Variable,
+            token_type: SimpleTagTokenType::Variable,
             kwarg: None,
         };
         assert_eq!(tokens, vec![Ok(name)]);
@@ -333,11 +333,11 @@ mod tests {
     fn test_lex_url_name_translated() {
         let template = "{% url _('foo') %}";
         let parts = TagParts { at: (7, 8) };
-        let lexer = UrlLexer::new(template.into(), parts);
+        let lexer = SimpleTagLexer::new(template.into(), parts);
         let tokens: Vec<_> = lexer.collect();
-        let name = UrlToken {
+        let name = SimpleTagToken {
             at: (7, 8),
-            token_type: UrlTokenType::TranslatedText,
+            token_type: SimpleTagTokenType::TranslatedText,
             kwarg: None,
         };
         assert_eq!(tokens, vec![Ok(name)]);
@@ -347,7 +347,7 @@ mod tests {
     fn test_lex_url_name_translated_incomplete() {
         let template = "{% url _('foo' %}";
         let parts = TagParts { at: (7, 7) };
-        let mut lexer = UrlLexer::new(template.into(), parts);
+        let mut lexer = SimpleTagLexer::new(template.into(), parts);
         let error = lexer.next().unwrap().unwrap_err();
         assert_eq!(
             error,
@@ -359,11 +359,11 @@ mod tests {
     fn test_lex_url_name_numeric() {
         let template = "{% url 5 %}";
         let parts = TagParts { at: (7, 1) };
-        let lexer = UrlLexer::new(template.into(), parts);
+        let lexer = SimpleTagLexer::new(template.into(), parts);
         let tokens: Vec<_> = lexer.collect();
-        let name = UrlToken {
+        let name = SimpleTagToken {
             at: (7, 1),
-            token_type: UrlTokenType::Numeric,
+            token_type: SimpleTagTokenType::Numeric,
             kwarg: None,
         };
         assert_eq!(tokens, vec![Ok(name)]);
@@ -373,11 +373,11 @@ mod tests {
     fn test_lex_url_name_text_kwarg() {
         let template = "{% url name='foo' %}";
         let parts = TagParts { at: (7, 10) };
-        let lexer = UrlLexer::new(template.into(), parts);
+        let lexer = SimpleTagLexer::new(template.into(), parts);
         let tokens: Vec<_> = lexer.collect();
-        let name = UrlToken {
+        let name = SimpleTagToken {
             at: (12, 5),
-            token_type: UrlTokenType::Text,
+            token_type: SimpleTagTokenType::Text,
             kwarg: Some((7, 4)),
         };
         assert_eq!(tokens, vec![Ok(name)]);
@@ -387,11 +387,11 @@ mod tests {
     fn test_lex_url_name_text_kwarg_double_quotes() {
         let template = "{% url name=\"foo\" %}";
         let parts = TagParts { at: (7, 10) };
-        let lexer = UrlLexer::new(template.into(), parts);
+        let lexer = SimpleTagLexer::new(template.into(), parts);
         let tokens: Vec<_> = lexer.collect();
-        let name = UrlToken {
+        let name = SimpleTagToken {
             at: (12, 5),
-            token_type: UrlTokenType::Text,
+            token_type: SimpleTagTokenType::Text,
             kwarg: Some((7, 4)),
         };
         assert_eq!(tokens, vec![Ok(name)]);
@@ -401,11 +401,11 @@ mod tests {
     fn test_lex_url_name_variable_kwarg() {
         let template = "{% url name=foo %}";
         let parts = TagParts { at: (7, 8) };
-        let lexer = UrlLexer::new(template.into(), parts);
+        let lexer = SimpleTagLexer::new(template.into(), parts);
         let tokens: Vec<_> = lexer.collect();
-        let name = UrlToken {
+        let name = SimpleTagToken {
             at: (12, 3),
-            token_type: UrlTokenType::Variable,
+            token_type: SimpleTagTokenType::Variable,
             kwarg: Some((7, 4)),
         };
         assert_eq!(tokens, vec![Ok(name)]);
@@ -415,11 +415,11 @@ mod tests {
     fn test_lex_url_name_leading_underscore_kwarg() {
         let template = "{% url name=_foo %}";
         let parts = TagParts { at: (7, 9) };
-        let lexer = UrlLexer::new(template.into(), parts);
+        let lexer = SimpleTagLexer::new(template.into(), parts);
         let tokens: Vec<_> = lexer.collect();
-        let name = UrlToken {
+        let name = SimpleTagToken {
             at: (12, 4),
-            token_type: UrlTokenType::Variable,
+            token_type: SimpleTagTokenType::Variable,
             kwarg: Some((7, 4)),
         };
         assert_eq!(tokens, vec![Ok(name)]);
@@ -429,11 +429,11 @@ mod tests {
     fn test_lex_url_name_translated_kwarg() {
         let template = "{% url name=_('foo') %}";
         let parts = TagParts { at: (7, 13) };
-        let lexer = UrlLexer::new(template.into(), parts);
+        let lexer = SimpleTagLexer::new(template.into(), parts);
         let tokens: Vec<_> = lexer.collect();
-        let name = UrlToken {
+        let name = SimpleTagToken {
             at: (12, 8),
-            token_type: UrlTokenType::TranslatedText,
+            token_type: SimpleTagTokenType::TranslatedText,
             kwarg: Some((7, 4)),
         };
         assert_eq!(tokens, vec![Ok(name)]);
@@ -443,11 +443,11 @@ mod tests {
     fn test_lex_url_name_numeric_kwarg() {
         let template = "{% url name=5 %}";
         let parts = TagParts { at: (7, 6) };
-        let lexer = UrlLexer::new(template.into(), parts);
+        let lexer = SimpleTagLexer::new(template.into(), parts);
         let tokens: Vec<_> = lexer.collect();
-        let name = UrlToken {
+        let name = SimpleTagToken {
             at: (12, 1),
-            token_type: UrlTokenType::Numeric,
+            token_type: SimpleTagTokenType::Numeric,
             kwarg: Some((7, 4)),
         };
         assert_eq!(tokens, vec![Ok(name)]);
@@ -457,16 +457,16 @@ mod tests {
     fn test_lex_url() {
         let template = "{% url 'home' next %}";
         let parts = TagParts { at: (7, 11) };
-        let lexer = UrlLexer::new(template.into(), parts);
+        let lexer = SimpleTagLexer::new(template.into(), parts);
         let tokens: Vec<_> = lexer.collect();
-        let home = UrlToken {
+        let home = SimpleTagToken {
             at: (7, 6),
-            token_type: UrlTokenType::Text,
+            token_type: SimpleTagTokenType::Text,
             kwarg: None,
         };
-        let next = UrlToken {
+        let next = SimpleTagToken {
             at: (14, 4),
-            token_type: UrlTokenType::Variable,
+            token_type: SimpleTagTokenType::Variable,
             kwarg: None,
         };
         assert_eq!(tokens, vec![Ok(home), Ok(next)]);
@@ -476,11 +476,11 @@ mod tests {
     fn test_lex_url_incomplete_kwarg() {
         let template = "{% url name= %}";
         let parts = TagParts { at: (7, 5) };
-        let mut lexer = UrlLexer::new(template.into(), parts);
+        let mut lexer = SimpleTagLexer::new(template.into(), parts);
         let error = lexer.next().unwrap().unwrap_err();
         assert_eq!(
             error,
-            UrlLexerError::IncompleteKeywordArgument { at: (7, 5).into() }
+            SimpleTagLexerError::IncompleteKeywordArgument { at: (7, 5).into() }
         );
     }
 
@@ -488,11 +488,11 @@ mod tests {
     fn test_lex_url_incomplete_kwarg_args() {
         let template = "{% url name= foo %}";
         let parts = TagParts { at: (7, 9) };
-        let mut lexer = UrlLexer::new(template.into(), parts);
+        let mut lexer = SimpleTagLexer::new(template.into(), parts);
         let error = lexer.next().unwrap().unwrap_err();
         assert_eq!(
             error,
-            UrlLexerError::IncompleteKeywordArgument { at: (7, 5).into() }
+            SimpleTagLexerError::IncompleteKeywordArgument { at: (7, 5).into() }
         );
     }
 
@@ -500,7 +500,7 @@ mod tests {
     fn test_lex_url_invalid_remainder() {
         let template = "{% url 'foo'remainder %}";
         let parts = TagParts { at: (7, 14) };
-        let mut lexer = UrlLexer::new(template.into(), parts);
+        let mut lexer = SimpleTagLexer::new(template.into(), parts);
         let error = lexer.next().unwrap().unwrap_err();
         assert_eq!(
             error,
@@ -512,7 +512,7 @@ mod tests {
     fn test_lex_url_kwarg_invalid_remainder() {
         let template = "{% url name='foo'=remainder %}";
         let parts = TagParts { at: (7, 20) };
-        let mut lexer = UrlLexer::new(template.into(), parts);
+        let mut lexer = SimpleTagLexer::new(template.into(), parts);
         let error = lexer.next().unwrap().unwrap_err();
         assert_eq!(
             error,
@@ -527,7 +527,7 @@ mod tests {
     fn test_lex_url_incomplete_kwarg_message() {
         let template = "{% url name= %}";
         let parts = TagParts { at: (7, 5) };
-        let mut lexer = UrlLexer::new(template.into(), parts);
+        let mut lexer = SimpleTagLexer::new(template.into(), parts);
         let error = lexer.next().unwrap().unwrap_err();
         assert_eq!(error.to_string(), "Incomplete keyword argument");
     }

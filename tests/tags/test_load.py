@@ -23,7 +23,9 @@ def test_load_missing():
 'missing_filters' is not a registered tag library. Must be one of:
 cache
 custom_filters
+custom_tags
 i18n
+invalid_tags
 l10n
 more_filters
 no_filters
@@ -45,7 +47,9 @@ tz"""
   help: Must be one of:
         cache
         custom_filters
+        custom_tags
         i18n
+        invalid_tags
         l10n
         more_filters
         no_filters
