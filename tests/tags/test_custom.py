@@ -93,6 +93,21 @@ def test_simple_tag_varargs_with_kwarg():
     assert rust_template.render({}) == "24"
 
 
+def test_simple_tag_keyword_only():
+    template = "{% load list from custom_tags %}{% list items header='Items' %}"
+
+    django_template = engines["django"].from_string(template)
+    rust_template = engines["rusty"].from_string(template)
+
+    expected = """\
+# Items
+* 1
+* 2
+* 3"""
+    assert django_template.render({"items": [1, 2, 3]}) == expected
+    assert rust_template.render({"items": [1, 2, 3]}) == expected
+
+
 def test_simple_tag_positional_after_kwarg():
     template = "{% load double from custom_tags %}{% double value=3 foo %}"
 
@@ -432,5 +447,26 @@ def test_simple_tag_render_error():
  1 │ {% load custom_tags %}{% combine operation='divide' %}
    ·                       ────────────────┬───────────────
    ·                                       ╰── here
+   ╰────
+"""
+
+
+def test_simple_tag_missing_keyword_argument():
+    template = "{% load list from custom_tags %}{% list %}"
+
+    with pytest.raises(TemplateSyntaxError) as exc_info:
+        engines["django"].from_string(template)
+
+    assert str(exc_info.value) == "'list' did not receive value(s) for the argument(s): 'items', 'header'"
+
+    with pytest.raises(TemplateSyntaxError) as exc_info:
+        engines["rusty"].from_string(template)
+
+    assert str(exc_info.value) == """\
+  × 'list' did not receive value(s) for the argument(s): 'items', 'header'
+   ╭────
+ 1 │ {% load list from custom_tags %}{% list %}
+   ·                                        ▲
+   ·                                        ╰── here
    ╰────
 """

@@ -36,6 +36,16 @@ def combine(*args, operation="add"):
 @register.simple_tag
 def table(**kwargs):
     return "\n".join(f"{k}-{v}" for k, v in kwargs.items())
+
+
+@register.simple_tag(name="list")
+def list_items(items, *, header):
+    parts = [f"# {header}"]
+    for item in items:
+        parts.append(f"* {item}")
+    return "\n".join(parts)
+
+
 #
 #
 #@register.simple_block_tag

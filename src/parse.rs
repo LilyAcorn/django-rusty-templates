@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::iter::Peekable;
 use std::sync::Arc;
 
@@ -679,7 +679,7 @@ pub enum ParseError {
         at: SourceSpan,
     },
     #[error("'{tag_name}' did not receive value(s) for the argument(s): {missing}")]
-    MissingPositionalArguments {
+    MissingArguments {
         tag_name: String,
         missing: String,
         #[label("here")]
@@ -1087,7 +1087,7 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
         varkw: bool,
         defaults_count: usize,
         kwonly: Vec<String>,
-        kwonly_defaults: HashMap<String, Bound<'_, PyAny>>,
+        kwonly_defaults: HashSet<String>,
         takes_context: bool,
         function_name: String,
     ) -> Result<(Vec<TagElement>, Vec<(String, TagElement)>, Option<String>), ParseError> {
@@ -1159,23 +1159,32 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
         }
 
         let args_count = args.len();
+        let mut missing_params = Vec::new();
         if params_count > args_count + defaults_count {
-            let missing_params: Vec<_> = params[args_count..params_count - defaults_count]
-                .iter()
-                .filter(|p| !seen_kwargs.contains_key(p.as_str()))
-                .collect();
-            if !missing_params.is_empty() {
-                let missing = missing_params
-                    .iter()
-                    .map(|p| format!("'{p}'"))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                return Err(ParseError::MissingPositionalArguments {
-                    tag_name: function_name,
-                    at: parts_at.into(),
-                    missing,
-                });
+            for param in &params[args_count..params_count - defaults_count] {
+                if !seen_kwargs.contains_key(param.as_str()) {
+                    missing_params.push(param.clone());
+                }
             }
+        }
+        for kwarg in kwonly {
+            if !seen_kwargs.contains_key(kwarg.as_str())
+                && !kwonly_defaults.contains(kwarg.as_str())
+            {
+                missing_params.push(kwarg.clone());
+            }
+        }
+        if !missing_params.is_empty() {
+            let missing = missing_params
+                .iter()
+                .map(|p| format!("'{p}'"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err(ParseError::MissingArguments {
+                tag_name: function_name,
+                at: parts_at.into(),
+                missing,
+            });
         }
         Ok((args, kwargs, target_var))
     }
@@ -1198,8 +1207,11 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
         let kwonly = context.closure_values[3].extract()?;
         let kwonly_defaults = &context.closure_values[4];
         let kwonly_defaults = match kwonly_defaults.is_none() {
-            true => HashMap::new(),
-            false => kwonly_defaults.extract()?,
+            true => HashSet::new(),
+            false => kwonly_defaults
+                .try_iter()?
+                .map(|item| item?.extract())
+                .collect::<Result<_, PyErr>>()?,
         };
         let params = context.closure_values[5].extract()?;
         let takes_context = context.closure_values[6].is_truthy()?;
