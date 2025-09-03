@@ -17,6 +17,7 @@ use crate::filters::DefaultFilter;
 use crate::filters::EscapeFilter;
 use crate::filters::ExternalFilter;
 use crate::filters::FilterType;
+use crate::filters::FirstFilter;
 use crate::filters::LowerFilter;
 use crate::filters::SafeFilter;
 use crate::filters::SlugifyFilter;
@@ -127,6 +128,10 @@ impl Filter {
             "escape" => match right {
                 Some(right) => return Err(unexpected_argument("escape", right)),
                 None => FilterType::Escape(EscapeFilter),
+            },
+            "first" => match right {
+                Some(right) => return Err(unexpected_argument("first", right)),
+                None => FilterType::First(FirstFilter::new(at.into())),
             },
             "lower" => match right {
                 Some(right) => return Err(unexpected_argument("lower", right)),
