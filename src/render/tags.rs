@@ -683,7 +683,7 @@ impl Render for Tag {
                         if let Ok(warnings) = py.import("warnings") {
                             let _ = warnings.call_method1(
                                     "warn",
-                                    ("A {% csrf_token %} was used in a template, but the context did not provide the value. This is usually caused by not using RequestContext.",)
+                                    ("A {% csrf_token %} was used in a template, but the context did not provide the value.  This is usually caused by not using RequestContext.",)
                                 );
                         }
                     }

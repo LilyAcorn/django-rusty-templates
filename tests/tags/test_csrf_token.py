@@ -1,4 +1,6 @@
+import warnings
 from django.template import engines
+from django.test import override_settings
 
 
 def test_csrf_token_basic():
@@ -109,3 +111,23 @@ def test_csrf_token_false_value():
 
     assert django_template.render(context) == ""
     assert rust_template.render(context) == ""
+
+
+@override_settings(DEBUG=True)
+def test_csrf_token_missing_debug_warning():
+    template = "{% csrf_token %}"
+
+    django_template = engines["django"].from_string(template)
+    rust_template = engines["rusty"].from_string(template)
+
+    expected = "A {% csrf_token %} was used in a template, but the context did not provide the value.  This is usually caused by not using RequestContext."
+
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        assert django_template.render({}) == ""
+        assert str(w[0].message) == expected
+
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        assert rust_template.render({}) == ""
+        assert str(w[0].message) == expected
