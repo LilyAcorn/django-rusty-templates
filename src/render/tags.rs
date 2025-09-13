@@ -672,17 +672,22 @@ impl Render for Tag {
                     }
                 }
                 None => {
-                    // TODO: When debug mode is accessible during rendering, emit warning.
-                    //
-                    // Example of what this might look like:
-                    // if engine.debug {  // or context.debug (however debug flag is exposed)
-                    //     py.import("warnings")?.call_method1(
-                    //         "warn",
-                    //         ("A {% csrf_token %} was used in a template, but the context \
-                    //           did not provide the value. This is usually caused by not \
-                    //           using RequestContext.",)
-                    //     )?;
-                    // }
+                    let debug = py
+                        .import("django.conf")
+                        .and_then(|conf| conf.getattr("settings"))
+                        .and_then(|settings| settings.getattr("DEBUG"))
+                        .and_then(|debug| debug.is_truthy())
+                        .unwrap_or(false);
+
+                    if debug {
+                        if let Ok(warnings) = py.import("warnings") {
+                            let _ = warnings.call_method1(
+                                    "warn",
+                                    ("A {% csrf_token %} was used in a template, but the context did not provide the value. This is usually caused by not using RequestContext.",)
+                                );
+                        }
+                    }
+
                     Cow::Borrowed("")
                 }
             },
