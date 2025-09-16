@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use miette::SourceSpan;
 use pyo3::prelude::*;
 
 use crate::types::Argument;
@@ -13,6 +14,7 @@ pub enum FilterType {
     Default(DefaultFilter),
     Escape(EscapeFilter),
     External(ExternalFilter),
+    First(FirstFilter),
     Lower(LowerFilter),
     Safe(SafeFilter),
     Slugify(SlugifyFilter),
@@ -65,6 +67,17 @@ pub struct EscapeFilter;
 pub struct ExternalFilter {
     pub filter: Arc<Py<PyAny>>,
     pub argument: Option<Argument>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct FirstFilter {
+    pub at: SourceSpan,
+}
+
+impl FirstFilter {
+    pub fn new(at: SourceSpan) -> Self {
+        Self { at }
+    }
 }
 
 impl ExternalFilter {

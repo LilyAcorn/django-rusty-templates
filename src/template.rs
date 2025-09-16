@@ -6,7 +6,7 @@ pub mod django_rusty_templates {
     use std::path::PathBuf;
 
     use encoding_rs::Encoding;
-    use pyo3::exceptions::{PyAttributeError, PyImportError, PyOverflowError, PyValueError};
+    use pyo3::exceptions::{PyAttributeError, PyImportError, PyOverflowError, PyTypeError, PyValueError};
     use pyo3::import_exception_bound;
     use pyo3::intern;
     use pyo3::prelude::*;
@@ -68,6 +68,16 @@ pub mod django_rusty_templates {
     }
 
     impl WithSourceCode for PyValueError {
+        fn with_source_code(
+            err: miette::Report,
+            source: impl miette::SourceCode + 'static,
+        ) -> PyErr {
+            let miette_err = err.with_source_code(source);
+            Self::new_err(format!("{miette_err:?}"))
+        }
+    }
+
+    impl WithSourceCode for PyTypeError {
         fn with_source_code(
             err: miette::Report,
             source: impl miette::SourceCode + 'static,
@@ -315,6 +325,12 @@ pub mod django_rusty_templates {
                     Err(err) => {
                         let err = err.try_into_render_error()?;
                         match err {
+                            RenderError::NotSubscriptable { .. } => {
+                                return Err(PyTypeError::with_source_code(
+                                    err.into(),
+                                    self.template.clone(),
+                                ));
+                            }
                             RenderError::VariableDoesNotExist { .. }
                             | RenderError::ArgumentDoesNotExist { .. } => {
                                 return Err(VariableDoesNotExist::with_source_code(
