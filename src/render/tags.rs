@@ -658,13 +658,12 @@ impl Render for Tag {
                 Some(token) => {
                     let bound_token = token.bind(py);
                     if bound_token.is_truthy().unwrap_or(false) {
-                        if bound_token.eq("NOTPROVIDED") {
+                        if bound_token.eq("NOTPROVIDED")? {
                             Cow::Borrowed("")
                         } else {
-                            let token_str = bound_token.str()?;
                             Cow::Owned(format!(
                                 r#"<input type="hidden" name="csrfmiddlewaretoken" value="{}">"#,
-                                html_escape::encode_quoted_attribute(&token_str)
+                                html_escape::encode_quoted_attribute(bound_token.str()?.to_str()?)
                             ))
                         }
                     } else {
@@ -672,11 +671,11 @@ impl Render for Tag {
                     }
                 }
                 None => {
-                   let debug = py
-                       .import("django.conf")?
-                       .getattr("settings")?
-                       .getattr("DEBUG")?
-                       .is_truthy()?;
+                    let debug = py
+                        .import("django.conf")?
+                        .getattr("settings")?
+                        .getattr("DEBUG")?
+                        .is_truthy()?;
 
                     if debug {
                         py.import("warnings")?.call_method1(
