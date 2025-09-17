@@ -658,10 +658,10 @@ impl Render for Tag {
                 Some(token) => {
                     let bound_token = token.bind(py);
                     if bound_token.is_truthy().unwrap_or(false) {
-                        let token_str = bound_token.to_string();
-                        if token_str == "NOTPROVIDED" {
+                        if bound_token.eq("NOTPROVIDED") {
                             Cow::Borrowed("")
                         } else {
+                            let token_str = bound_token.str()?;
                             Cow::Owned(format!(
                                 r#"<input type="hidden" name="csrfmiddlewaretoken" value="{}">"#,
                                 html_escape::encode_quoted_attribute(&token_str)
@@ -672,20 +672,17 @@ impl Render for Tag {
                     }
                 }
                 None => {
-                    let debug = py
-                        .import("django.conf")
-                        .and_then(|conf| conf.getattr("settings"))
-                        .and_then(|settings| settings.getattr("DEBUG"))
-                        .and_then(|debug| debug.is_truthy())
-                        .unwrap_or(false);
+                   let debug = py
+                       .import("django.conf")?
+                       .getattr("settings")?
+                       .getattr("DEBUG")?
+                       .is_truthy()?;
 
                     if debug {
-                        if let Ok(warnings) = py.import("warnings") {
-                            let _ = warnings.call_method1(
-                                    "warn",
-                                    ("A {% csrf_token %} was used in a template, but the context did not provide the value.  This is usually caused by not using RequestContext.",)
-                                );
-                        }
+                        py.import("warnings")?.call_method1(
+                            "warn",
+                            ("A {% csrf_token %} was used in a template, but the context did not provide the value.  This is usually caused by not using RequestContext.",)
+                        )?;
                     }
 
                     Cow::Borrowed("")
