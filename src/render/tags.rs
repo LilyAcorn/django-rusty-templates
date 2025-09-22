@@ -765,22 +765,21 @@ impl Render for For {
     }
 }
 
-impl SimpleTag {
-    fn call_tag<'t>(
-        &self,
-        py: Python<'_>,
-        template: TemplateString<'t>,
-        args: VecDeque<Bound<'_, PyAny>>,
-        kwargs: Bound<'_, PyDict>,
-    ) -> RenderResult<'t> {
-        let func = self.func.bind(py);
-        match func.call(
-            PyTuple::new(py, args).expect("All arguments should be valid Python objects"),
-            Some(&kwargs),
-        ) {
-            Ok(content) => Ok(Cow::Owned(content.to_string())),
-            Err(error) => Err(error.annotate(py, self.at, "here", template).into()),
-        }
+fn call_tag<'t>(
+    py: Python<'_>,
+    func: &Arc<Py<PyAny>>,
+    at: (usize, usize),
+    template: TemplateString<'t>,
+    args: VecDeque<Bound<'_, PyAny>>,
+    kwargs: Bound<'_, PyDict>,
+) -> RenderResult<'t> {
+    let func = func.bind(py);
+    match func.call(
+        PyTuple::new(py, args).expect("All arguments should be valid Python objects"),
+        Some(&kwargs),
+    ) {
+        Ok(content) => Ok(Cow::Owned(content.to_string())),
+        Err(error) => Err(error.annotate(py, at, "here", template).into()),
     }
 }
 
@@ -851,14 +850,14 @@ impl Render for SimpleTag {
             let py_context = add_context_to_args(py, &mut args, context)?;
 
             // Actually call the tag
-            let result = self.call_tag(py, template, args, kwargs);
+            let result = call_tag(py, &self.func, self.at, template, args, kwargs);
 
             retrieve_context(py, py_context, context);
 
             // Return the result of calling the tag
             result
         } else {
-            self.call_tag(py, template, args, kwargs)
+            call_tag(py, &self.func, self.at, template, args, kwargs)
         }
     }
 }
