@@ -824,7 +824,7 @@ struct SimpleTagContext<'py> {
 
 #[derive(Clone)]
 enum TagContext<'py> {
-    SimpleTag(SimpleTagContext<'py>),
+    Simple(SimpleTagContext<'py>),
 }
 
 pub struct Parser<'t, 'l, 'py> {
@@ -1088,7 +1088,7 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
                 parts,
             }),
             tag_name => match self.external_tags.get(tag_name) {
-                Some(TagContext::SimpleTag(context)) => {
+                Some(TagContext::Simple(context)) => {
                     Either::Left(self.parse_simple_tag(context, at, parts)?)
                 }
                 None => todo!("{tag_name}"),
@@ -1320,7 +1320,7 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
                         }
                     }
                 };
-                TagContext::SimpleTag(SimpleTagContext {
+                TagContext::Simple(SimpleTagContext {
                     func,
                     function_name,
                     takes_context,
