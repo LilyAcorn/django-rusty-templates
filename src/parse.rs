@@ -1278,27 +1278,36 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
                 .try_iter()?
                 .map(|v| v?.getattr("cell_contents"))
                 .collect::<Result<Vec<_>, _>>()?;
+
+            fn get_defaults_count(defaults: &Bound<'_, PyAny>) -> Result<usize, PyErr> {
+                match defaults.is_none() {
+                    true => Ok(0),
+                    false => defaults.len(),
+                }
+            }
+
+            fn get_kwonly_defaults(
+                kwonly_defaults: &Bound<'_, PyAny>,
+            ) -> Result<HashSet<String>, PyErr> {
+                match kwonly_defaults.is_none() {
+                    true => Ok(HashSet::new()),
+                    false => kwonly_defaults
+                        .try_iter()?
+                        .map(|item| item?.extract())
+                        .collect::<Result<_, PyErr>>(),
+                }
+            }
+
             if closure_names.contains(&"filename".to_string()) {
                 todo!("Inclusion tag")
             } else if closure_names.contains(&"end_name".to_string()) {
                 todo!("Simple block tag")
             } else {
-                let defaults = &closure_values[0];
-                let defaults_count = match defaults.is_none() {
-                    true => 0,
-                    false => defaults.len()?,
-                };
+                let defaults_count = get_defaults_count(&closure_values[0])?;
                 let func = closure_values[1].clone();
                 let function_name = closure_values[2].extract()?;
                 let kwonly = closure_values[3].extract()?;
-                let kwonly_defaults = &closure_values[4];
-                let kwonly_defaults = match kwonly_defaults.is_none() {
-                    true => HashSet::new(),
-                    false => kwonly_defaults
-                        .try_iter()?
-                        .map(|item| item?.extract())
-                        .collect::<Result<_, PyErr>>()?,
-                };
+                let kwonly_defaults = get_kwonly_defaults(&closure_values[4])?;
                 let params: Vec<String> = closure_values[5].extract()?;
                 let takes_context = closure_values[6].is_truthy()?;
                 let varargs = !closure_values[7].is_none();
