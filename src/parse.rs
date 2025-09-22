@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::iter::Peekable;
 use std::sync::Arc;
@@ -484,8 +485,8 @@ enum EndTagType {
 }
 
 impl EndTagType {
-    fn as_str(&self) -> &'static str {
-        match self {
+    fn as_cow(&self) -> Cow<'static, str> {
+        let end_tag = match self {
             Self::Autoescape => "endautoescape",
             Self::Elif => "elif",
             Self::Else => "else",
@@ -493,7 +494,8 @@ impl EndTagType {
             Self::Empty => "empty",
             Self::EndFor => "endfor",
             Self::Verbatim => "endverbatim",
-        }
+        };
+        Cow::Borrowed(end_tag)
     }
 }
 
@@ -505,8 +507,8 @@ struct EndTag {
 }
 
 impl EndTag {
-    fn as_str(&self) -> &'static str {
-        self.end.as_str()
+    fn as_cow(&self) -> Cow<'static, str> {
+        self.end.as_cow()
     }
 }
 
@@ -646,7 +648,7 @@ pub enum ParseError {
     },
     #[error("Unclosed '{start}' tag. Looking for one of: {expected}")]
     MissingEndTag {
-        start: &'static str,
+        start: Cow<'static, str>,
         expected: String,
         #[label("started here")]
         at: SourceSpan,
@@ -732,7 +734,7 @@ pub enum ParseError {
     },
     #[error("Unexpected tag {unexpected}")]
     UnexpectedEndTag {
-        unexpected: &'static str,
+        unexpected: Cow<'static, str>,
         #[label("unexpected tag")]
         at: SourceSpan,
     },
@@ -749,7 +751,7 @@ pub enum ParseError {
     },
     #[error("Unexpected tag {unexpected}, expected {expected}")]
     WrongEndTag {
-        unexpected: &'static str,
+        unexpected: Cow<'static, str>,
         expected: String,
         #[label("unexpected tag")]
         at: SourceSpan,
@@ -888,7 +890,7 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
                     Either::Right(end_tag) => {
                         return Err(ParseError::UnexpectedEndTag {
                             at: end_tag.at.into(),
-                            unexpected: end_tag.as_str(),
+                            unexpected: end_tag.as_cow(),
                         }
                         .into());
                     }
@@ -902,7 +904,7 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
     fn parse_until(
         &mut self,
         until: Vec<EndTagType>,
-        start: &'static str,
+        start: Cow<'static, str>,
         start_at: (usize, usize),
     ) -> Result<(Vec<TokenTree>, EndTag), PyParseError> {
         let mut nodes = Vec::new();
@@ -926,10 +928,10 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
                             return Err(ParseError::WrongEndTag {
                                 expected: until
                                     .iter()
-                                    .map(|u| u.as_str())
+                                    .map(|u| u.as_cow())
                                     .collect::<Vec<_>>()
                                     .join(", "),
-                                unexpected: end_tag.as_str(),
+                                unexpected: end_tag.as_cow(),
                                 at: end_tag.at.into(),
                                 start_at: start_at.into(),
                             }
@@ -944,7 +946,7 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
             start,
             expected: until
                 .iter()
-                .map(|u| u.as_str())
+                .map(|u| u.as_cow())
                 .collect::<Vec<_>>()
                 .join(", "),
             at: start_at.into(),
@@ -1416,7 +1418,7 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
         parts: TagParts,
     ) -> Result<TokenTree, PyParseError> {
         let token = lex_autoescape_argument(self.template, parts).map_err(ParseError::from)?;
-        let (nodes, _) = self.parse_until(vec![EndTagType::Autoescape], "autoescape", at)?;
+        let (nodes, _) = self.parse_until(vec![EndTagType::Autoescape], "autoescape".into(), at)?;
         Ok(TokenTree::Tag(Tag::Autoescape {
             enabled: token.enabled,
             nodes,
@@ -1432,7 +1434,7 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
         let condition = parse_if_condition(self, parts, at)?;
         let (nodes, end_tag) = self.parse_until(
             vec![EndTagType::Elif, EndTagType::Else, EndTagType::EndIf],
-            start,
+            start.into(),
             at,
         )?;
         let falsey = match end_tag {
@@ -1446,7 +1448,7 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
                 end: EndTagType::Else,
                 parts: _parts,
             } => {
-                let (nodes, _) = self.parse_until(vec![EndTagType::EndIf], "else", at)?;
+                let (nodes, _) = self.parse_until(vec![EndTagType::EndIf], "else".into(), at)?;
                 Some(nodes)
             }
             EndTag {
@@ -1470,8 +1472,11 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
     ) -> Result<TokenTree, PyParseError> {
         self.forloop_depth += 1;
         let (iterable, variables, reversed) = parse_for_loop(self, parts, at)?;
-        let (nodes, end_tag) =
-            self.parse_until(vec![EndTagType::Empty, EndTagType::EndFor], "for", at)?;
+        let (nodes, end_tag) = self.parse_until(
+            vec![EndTagType::Empty, EndTagType::EndFor],
+            "for".into(),
+            at,
+        )?;
         self.forloop_depth -= 1;
         let empty = match end_tag {
             EndTag {
@@ -1479,7 +1484,7 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
                 end: EndTagType::Empty,
                 parts: _parts,
             } => {
-                let (nodes, _) = self.parse_until(vec![EndTagType::EndFor], "empty", at)?;
+                let (nodes, _) = self.parse_until(vec![EndTagType::EndFor], "empty".into(), at)?;
                 Some(nodes)
             }
             EndTag {
