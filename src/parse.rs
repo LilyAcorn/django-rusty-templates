@@ -456,6 +456,33 @@ impl PartialEq for SimpleTag {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct SimpleBlockTag {
+    pub func: Arc<Py<PyAny>>,
+    pub nodes: Vec<TokenTree>,
+    pub at: (usize, usize),
+    pub takes_context: bool,
+    pub args: Vec<TagElement>,
+    pub kwargs: Vec<(String, TagElement)>,
+    pub target_var: Option<String>,
+}
+
+impl PartialEq for SimpleBlockTag {
+    fn eq(&self, other: &Self) -> bool {
+        // We use `Arc::ptr_eq` here to avoid needing the `py` token for true
+        // equality comparison between two `Py` smart pointers.
+        //
+        // We only use `eq` in tests, so this concession is acceptable here.
+        self.at == other.at
+            && self.takes_context == other.takes_context
+            && self.args == other.args
+            && self.kwargs == other.kwargs
+            && self.target_var == other.target_var
+            && self.nodes == other.nodes
+            && Arc::ptr_eq(&self.func, &other.func)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Tag {
     Autoescape {
@@ -470,6 +497,7 @@ pub enum Tag {
     For(For),
     Load,
     SimpleTag(SimpleTag),
+    SimpleBlockTag(SimpleBlockTag),
     Url(Url),
 }
 
@@ -482,6 +510,7 @@ enum EndTagType {
     Empty,
     EndFor,
     Verbatim,
+    Custom(String),
 }
 
 impl EndTagType {
@@ -494,6 +523,7 @@ impl EndTagType {
             Self::Empty => "empty",
             Self::EndFor => "endfor",
             Self::Verbatim => "endverbatim",
+            Self::Custom(s) => return Cow::Owned(s.clone()),
         };
         Cow::Borrowed(end_tag)
     }
@@ -680,6 +710,12 @@ pub enum ParseError {
         #[label("here")]
         at: SourceSpan,
     },
+    #[error("'{name}' must have a first argument of 'content'")]
+    RequiresContent {
+        name: String,
+        #[label("loaded here")]
+        at: SourceSpan,
+    },
     #[error(
         "'{name}' is decorated with takes_context=True so it must have a first argument of 'context'"
     )]
@@ -809,7 +845,7 @@ impl LoadToken {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 struct SimpleTagContext<'py> {
     func: Bound<'py, PyAny>,
     function_name: String,
@@ -825,6 +861,11 @@ struct SimpleTagContext<'py> {
 #[derive(Clone)]
 enum TagContext<'py> {
     Simple(SimpleTagContext<'py>),
+    SimpleBlock {
+        end_tag_name: String,
+        context: SimpleTagContext<'py>,
+    },
+    EndSimpleBlock,
 }
 
 pub struct Parser<'t, 'l, 'py> {
@@ -1091,6 +1132,21 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
                 Some(TagContext::Simple(context)) => {
                     Either::Left(self.parse_simple_tag(context, at, parts)?)
                 }
+                Some(TagContext::SimpleBlock {
+                    context,
+                    end_tag_name,
+                }) => Either::Left(self.parse_simple_block_tag(
+                    context.clone(),
+                    tag_name.to_string(),
+                    end_tag_name.clone(),
+                    at,
+                    parts,
+                )?),
+                Some(TagContext::EndSimpleBlock) => Either::Right(EndTag {
+                    end: EndTagType::Custom(tag_name.to_string()),
+                    at,
+                    parts,
+                }),
                 None => todo!("{tag_name}"),
             },
         })
@@ -1218,6 +1274,32 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
         Ok(TokenTree::Tag(Tag::SimpleTag(tag)))
     }
 
+    fn parse_simple_block_tag(
+        &mut self,
+        context: SimpleTagContext,
+        tag_name: String,
+        end_tag_name: String,
+        at: (usize, usize),
+        parts: TagParts,
+    ) -> Result<TokenTree, PyParseError> {
+        let (args, kwargs, target_var) = self.parse_custom_tag_parts(parts, &context)?;
+        let (nodes, _) = self.parse_until(
+            vec![EndTagType::Custom(end_tag_name)],
+            Cow::Owned(tag_name),
+            at,
+        )?;
+        let tag = SimpleBlockTag {
+            func: context.func.clone().unbind().into(),
+            nodes,
+            at,
+            takes_context: context.takes_context,
+            args,
+            kwargs,
+            target_var,
+        };
+        Ok(TokenTree::Tag(Tag::SimpleBlockTag(tag)))
+    }
+
     fn parse_load(
         &mut self,
         at: (usize, usize),
@@ -1301,7 +1383,63 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
             if closure_names.contains(&"filename".to_string()) {
                 todo!("Inclusion tag")
             } else if closure_names.contains(&"end_name".to_string()) {
-                todo!("Simple block tag")
+                let defaults_count = get_defaults_count(&closure_values[0])?;
+                let end_tag_name: String = closure_values[1].extract()?;
+                let func = closure_values[2].clone();
+                let function_name = closure_values[3].extract()?;
+                let kwonly = closure_values[4].extract()?;
+                let kwonly_defaults = get_kwonly_defaults(&closure_values[5])?;
+                let params: Vec<String> = closure_values[6].extract()?;
+                let takes_context = closure_values[7].is_truthy()?;
+                let varargs = !closure_values[8].is_none();
+                let varkw = !closure_values[9].is_none();
+
+                let params = match takes_context {
+                    false => {
+                        if let Some(param) = params.first()
+                            && param == "content"
+                        {
+                            params.iter().skip(1).cloned().collect()
+                        } else {
+                            return Err(ParseError::RequiresContent {
+                                name: function_name,
+                                at: at.into(),
+                            }
+                            .into());
+                        }
+                    }
+                    true => {
+                        todo!("context and content");
+                        if let Some(param) = params.first()
+                            && param == "context"
+                        {
+                            params.iter().skip(1).cloned().collect()
+                        } else {
+                            return Err(ParseError::RequiresContext {
+                                name: function_name,
+                                at: at.into(),
+                            }
+                            .into());
+                        }
+                    }
+                };
+                // TODO: `end_tag_name already present?
+                self.external_tags
+                    .insert(end_tag_name.clone(), TagContext::EndSimpleBlock);
+                TagContext::SimpleBlock {
+                    end_tag_name,
+                    context: SimpleTagContext {
+                        func,
+                        function_name,
+                        takes_context,
+                        params,
+                        defaults_count,
+                        varargs,
+                        kwonly,
+                        kwonly_defaults,
+                        varkw,
+                    },
+                }
             } else {
                 let defaults_count = get_defaults_count(&closure_values[0])?;
                 let func = closure_values[1].clone();
