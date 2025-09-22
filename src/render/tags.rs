@@ -784,6 +784,50 @@ impl SimpleTag {
     }
 }
 
+fn add_context_to_args<'py>(
+    py: Python<'py>,
+    args: &mut VecDeque<Bound<'py, PyAny>>,
+    context: &mut Context,
+) -> Result<Bound<'py, PyAny>, PyErr> {
+    // Take ownership of `context` so we can pass it to Python.
+    // The `context` variable now points to an empty `Context` instance which will not be
+    // used except as a placeholder.
+    let swapped_context = std::mem::take(context);
+
+    // Wrap the context as a Python object and add it to the call args
+    let py_context = Bound::new(py, PyContext::new(swapped_context))?.into_any();
+    args.push_front(py_context.clone());
+
+    Ok(py_context)
+}
+
+fn retrieve_context<'py>(py: Python<'py>, py_context: Bound<'py, PyAny>, context: &mut Context) {
+    // Retrieve the PyContext wrapper from Python
+    let extracted_context: PyContext = py_context
+        .extract()
+        .expect("The type of py_context should not have changed");
+    // Ensure we only hold one reference in Rust by dropping the Python object.
+    drop(py_context);
+
+    // Try to remove the Context from the PyContext
+    let inner_context = match Arc::try_unwrap(extracted_context.context) {
+        // Fast path when we have the only reference in the Arc.
+        Ok(inner_context) => inner_context
+            .into_inner()
+            .expect("Mutex should be unlocked because Arc refcount is one."),
+        // Slow path when Python has held on to the context for some reason.
+        // We can still do the right thing by cloning.
+        Err(inner_context) => {
+            let guard = inner_context
+                .lock_py_attached(py)
+                .expect("Mutex should not be poisoned");
+            guard.clone_ref(py)
+        }
+    };
+    // Put the Context back in `context`
+    let _ = std::mem::replace(context, inner_context);
+}
+
 impl Render for SimpleTag {
     fn render<'t>(
         &self,
@@ -804,42 +848,12 @@ impl Render for SimpleTag {
             kwargs.set_item(key, value)?;
         }
         if self.takes_context {
-            // Take ownership of `context` so we can pass it to Python.
-            // The `context` variable now points to an empty `Context` instance which will not be
-            // used except as a placeholder.
-            let swapped_context = std::mem::take(context);
-
-            // Wrap the context as a Python object and add it to the call args
-            let py_context = Bound::new(py, PyContext::new(swapped_context))?.into_any();
-            args.push_front(py_context.clone());
+            let py_context = add_context_to_args(py, &mut args, context)?;
 
             // Actually call the tag
             let result = self.call_tag(py, template, args, kwargs);
 
-            // Retrieve the PyContext wrapper from Python
-            let extracted_context: PyContext = py_context
-                .extract()
-                .expect("The type of py_context should not have changed");
-            // Ensure we only hold one reference in Rust by dropping the Python object.
-            drop(py_context);
-
-            // Try to remove the Context from the PyContext
-            let inner_context = match Arc::try_unwrap(extracted_context.context) {
-                // Fast path when we have the only reference in the Arc.
-                Ok(inner_context) => inner_context
-                    .into_inner()
-                    .expect("Mutex should be unlocked because Arc refcount is one."),
-                // Slow path when Python has held on to the context for some reason.
-                // We can still do the right thing by cloning.
-                Err(inner_context) => {
-                    let guard = inner_context
-                        .lock_py_attached(py)
-                        .expect("Mutex should not be poisoned");
-                    guard.clone_ref(py)
-                }
-            };
-            // Put the Context back in `context`
-            let _ = std::mem::replace(context, inner_context);
+            retrieve_context(py, py_context, context);
 
             // Return the result of calling the tag
             result
