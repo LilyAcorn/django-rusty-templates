@@ -724,6 +724,14 @@ pub enum ParseError {
         #[label("loaded here")]
         at: SourceSpan,
     },
+    #[error(
+        "'{name}' is decorated with takes_context=True so it must have a first argument of 'context' and a second argument of 'content'"
+    )]
+    RequiresContextAndContent {
+        name: String,
+        #[label("loaded here")]
+        at: SourceSpan,
+    },
     #[error("'{tag_name}' did not receive value(s) for the argument(s): {missing}")]
     MissingArguments {
         tag_name: String,
@@ -1409,13 +1417,12 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
                         }
                     }
                     true => {
-                        todo!("context and content");
-                        if let Some(param) = params.first()
-                            && param == "context"
+                        if let Some([context, content]) = params.first_chunk::<2>()
+                            && context == "context" && content == "content"
                         {
-                            params.iter().skip(1).cloned().collect()
+                            params.iter().skip(2).cloned().collect()
                         } else {
-                            return Err(ParseError::RequiresContext {
+                            return Err(ParseError::RequiresContextAndContent {
                                 name: function_name,
                                 at: at.into(),
                             }

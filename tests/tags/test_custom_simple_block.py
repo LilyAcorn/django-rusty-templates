@@ -1,4 +1,6 @@
+import pytest
 from django.template import engines
+from django.template.exceptions import TemplateSyntaxError
 
 
 def test_simple_block_tag_repeat():
@@ -10,3 +12,87 @@ def test_simple_block_tag_repeat():
     expected = "foofoofoofoofoo"
     assert django_template.render({}) == expected
     assert rust_template.render({}) == expected
+
+
+def test_simple_block_tag_missing_context():
+    template = "{% load missing_context_block from invalid_tags %}{% missing_context_block %}{% end_missing_context_block %}"
+
+    with pytest.raises(TemplateSyntaxError) as exc_info:
+        engines["django"].from_string(template)
+
+    assert (
+        str(exc_info.value)
+        == "'missing_context_block' is decorated with takes_context=True so it must have a first argument of 'context' and a second argument of 'content'"
+    )
+
+    with pytest.raises(TemplateSyntaxError) as exc_info:
+        engines["rusty"].from_string(template)
+
+    assert (
+        str(exc_info.value)
+        == """\
+  × 'missing_context_block' is decorated with takes_context=True so it must
+  │ have a first argument of 'context' and a second argument of 'content'
+   ╭────
+ 1 │ {% load missing_context_block from invalid_tags %}{% missing_context_block %}{% end_missing_context_block %}
+   ·         ──────────┬──────────
+   ·                   ╰── loaded here
+   ╰────
+"""
+    )
+
+
+def test_simple_block_tag_missing_content():
+    template = "{% load missing_content_block from invalid_tags %}{% missing_content_block %}{% end_missing_content_block %}"
+
+    with pytest.raises(TemplateSyntaxError) as exc_info:
+        engines["django"].from_string(template)
+
+    assert (
+        str(exc_info.value)
+        == "'missing_content_block' must have a first argument of 'content'"
+    )
+
+    with pytest.raises(TemplateSyntaxError) as exc_info:
+        engines["rusty"].from_string(template)
+
+    assert (
+        str(exc_info.value)
+        == """\
+  × 'missing_content_block' must have a first argument of 'content'
+   ╭────
+ 1 │ {% load missing_content_block from invalid_tags %}{% missing_content_block %}{% end_missing_content_block %}
+   ·         ──────────┬──────────
+   ·                   ╰── loaded here
+   ╰────
+"""
+    )
+
+
+def test_simple_block_tag_missing_content_takes_context():
+    template = "{% load missing_content_block_with_context from invalid_tags %}{% missing_content_block_with_context %}{% end_missing_content_block_with_context %}"
+
+    with pytest.raises(TemplateSyntaxError) as exc_info:
+        engines["django"].from_string(template)
+
+    assert (
+        str(exc_info.value)
+        == "'missing_content_block_with_context' is decorated with takes_context=True so it must have a first argument of 'context' and a second argument of 'content'"
+    )
+
+    with pytest.raises(TemplateSyntaxError) as exc_info:
+        engines["rusty"].from_string(template)
+
+    assert (
+        str(exc_info.value)
+        == """\
+  × 'missing_content_block_with_context' is decorated with takes_context=True
+  │ so it must have a first argument of 'context' and a second argument of
+  │ 'content'
+   ╭────
+ 1 │ {% load missing_content_block_with_context from invalid_tags %}{% missing_content_block_with_context %}{% end_missing_content_block_with_context %}
+   ·         ─────────────────┬────────────────
+   ·                          ╰── loaded here
+   ╰────
+"""
+    )
