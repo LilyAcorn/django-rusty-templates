@@ -72,11 +72,11 @@ def counter(context):
     return ""
 
 
-# @register.simple_block_tag
-# def repeat(content, count):
-#    return content * count
-#
-#
+@register.simple_block_tag
+def repeat(content, count):
+    return content * count
+
+
 # @register.inclusion_tag("results.html")
 # def results(poll):
 #    return {"choices": poll.choices}
