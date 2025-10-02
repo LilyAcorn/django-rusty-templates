@@ -14,6 +14,18 @@ def test_simple_block_tag_repeat():
     assert rust_template.render({}) == expected
 
 
+def test_with_block():
+    template = "{% load with_block from custom_tags %}{% with_block var='name' %}{{ user }}{% end_with_block %}{{ name|lower }}"
+
+    django_template = engines["django"].from_string(template)
+    rust_template = engines["rusty"].from_string(template)
+
+    context = {"user": "Lily"}
+    expected = "lily"
+    assert django_template.render(context) == expected
+    assert rust_template.render(context) == expected
+
+
 def test_simple_block_tag_missing_context():
     template = "{% load missing_context_block from invalid_tags %}{% missing_context_block %}{% end_missing_context_block %}"
 
