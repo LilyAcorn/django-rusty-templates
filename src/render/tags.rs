@@ -852,6 +852,20 @@ fn build_args<'py>(
         .collect()
 }
 
+fn build_kwargs<'py>(
+    py: Python<'py>,
+    template: TemplateString<'_>,
+    context: &mut Context,
+    kwargs: &Vec<(String, TagElement)>,
+) -> Result<Bound<'py, PyDict>, PyRenderError> {
+    let _kwargs = PyDict::new(py);
+    for (key, value) in kwargs {
+        let value = value.resolve(py, template, context, ResolveFailures::Raise)?;
+        _kwargs.set_item(key, value)?;
+    }
+    Ok(_kwargs)
+}
+
 impl Render for SimpleTag {
     fn render<'t>(
         &self,
@@ -860,11 +874,7 @@ impl Render for SimpleTag {
         context: &mut Context,
     ) -> RenderResult<'t> {
         let mut args = build_args(py, template, context, &self.args)?;
-        let kwargs = PyDict::new(py);
-        for (key, value) in &self.kwargs {
-            let value = value.resolve(py, template, context, ResolveFailures::Raise)?;
-            kwargs.set_item(key, value)?;
-        }
+        let kwargs = build_kwargs(py, template, context, &self.kwargs)?;
         if self.takes_context {
             let py_context = add_context_to_args(py, &mut args, context)?;
 
@@ -889,11 +899,7 @@ impl Render for SimpleBlockTag {
         context: &mut Context,
     ) -> RenderResult<'t> {
         let mut args = build_args(py, template, context, &self.args)?;
-        let kwargs = PyDict::new(py);
-        for (key, value) in &self.kwargs {
-            let value = value.resolve(py, template, context, ResolveFailures::Raise)?;
-            kwargs.set_item(key, value)?;
-        }
+        let kwargs = build_kwargs(py, template, context, &self.kwargs)?;
 
         let content = self.nodes.render(py, template, context)?;
         let content = PyString::new(py, &content).into_any();
