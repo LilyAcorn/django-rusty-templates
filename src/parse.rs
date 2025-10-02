@@ -1418,7 +1418,8 @@ impl<'t, 'l, 'py> Parser<'t, 'l, 'py> {
                     }
                     true => {
                         if let Some([context, content]) = params.first_chunk::<2>()
-                            && context == "context" && content == "content"
+                            && context == "context"
+                            && content == "content"
                         {
                             params.iter().skip(2).cloned().collect()
                         } else {

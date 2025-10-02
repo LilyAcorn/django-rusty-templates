@@ -38,6 +38,35 @@ def test_simple_tag_double_missing_variable():
     assert rust_template.render({}) == ""
 
 
+def test_simple_tag_multiply_missing_variables():
+    template = "{% load multiply from custom_tags %}{% multiply foo bar eggs %}"
+
+    django_template = engines["django"].from_string(template)
+    rust_template = engines["rusty"].from_string(template)
+
+    with pytest.raises(TypeError) as exc_info:
+        django_template.render({})
+
+    error = str(exc_info.value)
+    assert error == "can't multiply sequence by non-int of type 'str'"
+
+    with pytest.raises(TypeError) as exc_info:
+        rust_template.render({})
+
+    error = str(exc_info.value)
+    assert (
+        error
+        == """\
+  × can't multiply sequence by non-int of type 'str'
+   ╭────
+ 1 │ {% load multiply from custom_tags %}{% multiply foo bar eggs %}
+   ·                                     ─────────────┬─────────────
+   ·                                                  ╰── here
+   ╰────
+"""
+    )
+
+
 def test_simple_tag_kwargs():
     template = "{% load table from custom_tags %}{% table foo='bar' spam=1 %}"
 

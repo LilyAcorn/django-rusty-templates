@@ -165,6 +165,33 @@ def test_simple_block_tag_end_tag_only():
     )
 
 
+def test_simple_block_tag_missing_argument():
+    template = "{% load repeat from custom_tags %}{% repeat five %}{% endrepeat %}"
+
+    django_template = engines["django"].from_string(template)
+    rust_template = engines["rusty"].from_string(template)
+
+    with pytest.raises(TypeError) as exc_info:
+        django_template.render({})
+
+    assert str(exc_info.value) == "can't multiply sequence by non-int of type 'str'"
+
+    with pytest.raises(TypeError) as exc_info:
+        rust_template.render({})
+
+    assert (
+        str(exc_info.value)
+        == """\
+  × can't multiply sequence by non-int of type 'str'
+   ╭────
+ 1 │ {% load repeat from custom_tags %}{% repeat five %}{% endrepeat %}
+   ·                                   ────────┬────────
+   ·                                           ╰── here
+   ╰────
+"""
+    )
+
+
 def test_simple_block_tag_invalid_argument():
     template = "{% load repeat from custom_tags %}{% repeat five|default:five %}{% endrepeat %}"
 

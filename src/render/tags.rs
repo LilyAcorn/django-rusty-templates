@@ -12,7 +12,7 @@ use pyo3::types::{PyBool, PyDict, PyList, PyNone, PyString, PyTuple};
 use super::types::{AsBorrowedContent, Content, Context, PyContext};
 use super::{Evaluate, Render, RenderResult, Resolve, ResolveFailures, ResolveResult};
 use crate::error::{AnnotatePyErr, PyRenderError, RenderError};
-use crate::parse::{For, IfCondition, SimpleBlockTag, SimpleTag, Tag, Url};
+use crate::parse::{For, IfCondition, SimpleBlockTag, SimpleTag, Tag, TagElement, Url};
 use crate::template::django_rusty_templates::NoReverseMatch;
 use crate::types::TemplateString;
 use crate::utils::PyResultMethods;
@@ -828,6 +828,30 @@ fn retrieve_context<'py>(py: Python<'py>, py_context: Bound<'py, PyAny>, context
     let _ = std::mem::replace(context, inner_context);
 }
 
+fn build_arg<'py>(
+    py: Python<'py>,
+    template: TemplateString<'_>,
+    context: &mut Context,
+    arg: &TagElement,
+) -> Result<Bound<'py, PyAny>, PyRenderError> {
+    let arg = match arg.resolve(py, template, context, ResolveFailures::Raise)? {
+        Some(arg) => arg.to_py(py)?,
+        None => PyString::intern(py, "").into_any(),
+    };
+    Ok(arg)
+}
+
+fn build_args<'py>(
+    py: Python<'py>,
+    template: TemplateString<'_>,
+    context: &mut Context,
+    args: &[TagElement],
+) -> Result<VecDeque<Bound<'py, PyAny>>, PyRenderError> {
+    args.iter()
+        .map(|arg| build_arg(py, template, context, arg))
+        .collect()
+}
+
 impl Render for SimpleTag {
     fn render<'t>(
         &self,
@@ -835,13 +859,7 @@ impl Render for SimpleTag {
         template: TemplateString<'t>,
         context: &mut Context,
     ) -> RenderResult<'t> {
-        let mut args = VecDeque::new();
-        for arg in &self.args {
-            match arg.resolve(py, template, context, ResolveFailures::Raise)? {
-                None => return Ok(Cow::Borrowed("")),
-                Some(arg) => args.push_back(arg.to_py(py)?),
-            }
-        }
+        let mut args = build_args(py, template, context, &self.args)?;
         let kwargs = PyDict::new(py);
         for (key, value) in &self.kwargs {
             let value = value.resolve(py, template, context, ResolveFailures::Raise)?;
@@ -870,13 +888,7 @@ impl Render for SimpleBlockTag {
         template: TemplateString<'t>,
         context: &mut Context,
     ) -> RenderResult<'t> {
-        let mut args = VecDeque::new();
-        for arg in &self.args {
-            match arg.resolve(py, template, context, ResolveFailures::Raise)? {
-                None => return Ok(Cow::Borrowed("")),
-                Some(arg) => args.push_back(arg.to_py(py)?),
-            }
-        }
+        let mut args = build_args(py, template, context, &self.args)?;
         let kwargs = PyDict::new(py);
         for (key, value) in &self.kwargs {
             let value = value.resolve(py, template, context, ResolveFailures::Raise)?;
