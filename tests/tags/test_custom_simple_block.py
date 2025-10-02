@@ -108,3 +108,57 @@ def test_simple_block_tag_missing_content_takes_context():
    ╰────
 """
     )
+
+
+def test_simple_block_tag_missing_end_tag():
+    template = "{% load repeat from custom_tags %}{% repeat 3 %}"
+
+    with pytest.raises(TemplateSyntaxError) as exc_info:
+        engines["django"].from_string(template)
+
+    assert (
+        str(exc_info.value)
+        == "Unclosed tag on line 1: 'repeat'. Looking for one of: endrepeat."
+    )
+
+    with pytest.raises(TemplateSyntaxError) as exc_info:
+        engines["rusty"].from_string(template)
+
+    assert (
+        str(exc_info.value)
+        == """\
+  × Unclosed 'repeat' tag. Looking for one of: endrepeat
+   ╭────
+ 1 │ {% load repeat from custom_tags %}{% repeat 3 %}
+   ·                                   ───────┬──────
+   ·                                          ╰── started here
+   ╰────
+"""
+    )
+
+
+def test_simple_block_tag_end_tag_only():
+    template = "{% load repeat from custom_tags %}{% endrepeat %}"
+
+    with pytest.raises(TemplateSyntaxError) as exc_info:
+        engines["django"].from_string(template)
+
+    assert (
+        str(exc_info.value)
+        == "Invalid block tag on line 1: 'endrepeat'. Did you forget to register or load this tag?"
+    )
+
+    with pytest.raises(TemplateSyntaxError) as exc_info:
+        engines["rusty"].from_string(template)
+
+    assert (
+        str(exc_info.value)
+        == """\
+  × Unexpected tag endrepeat
+   ╭────
+ 1 │ {% load repeat from custom_tags %}{% endrepeat %}
+   ·                                   ───────┬───────
+   ·                                          ╰── unexpected tag
+   ╰────
+"""
+    )
