@@ -1,5 +1,6 @@
 import pytest
 from django.template import engines
+from django.template.base import VariableDoesNotExist
 from django.template.exceptions import TemplateSyntaxError
 
 
@@ -159,6 +160,37 @@ def test_simple_block_tag_end_tag_only():
  1 │ {% load repeat from custom_tags %}{% endrepeat %}
    ·                                   ───────┬───────
    ·                                          ╰── unexpected tag
+   ╰────
+"""
+    )
+
+
+def test_simple_block_tag_invalid_argument():
+    template = "{% load repeat from custom_tags %}{% repeat five|default:five %}{% endrepeat %}"
+
+    django_template = engines["django"].from_string(template)
+    rust_template = engines["rusty"].from_string(template)
+
+    with pytest.raises(VariableDoesNotExist) as exc_info:
+        django_template.render({})
+
+    assert (
+        str(exc_info.value)
+        == "Failed lookup for key [five] in [{'True': True, 'False': False, 'None': None}, {}]"
+    )
+
+    with pytest.raises(VariableDoesNotExist) as exc_info:
+        rust_template.render({})
+
+    assert (
+        str(exc_info.value)
+        == """\
+  × Failed lookup for key [five] in {"False": False, "None": None, "True":
+  │ True}
+   ╭────
+ 1 │ {% load repeat from custom_tags %}{% repeat five|default:five %}{% endrepeat %}
+   ·                                                          ──┬─
+   ·                                                            ╰── key
    ╰────
 """
     )
