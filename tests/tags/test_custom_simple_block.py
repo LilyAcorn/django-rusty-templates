@@ -221,3 +221,30 @@ def test_simple_block_tag_invalid_argument():
    ╰────
 """
     )
+
+
+def test_simple_block_tag_argument_syntax_error():
+    template = "{% load repeat from custom_tags %}{% repeat a= %}{% endrepeat %}"
+
+    with pytest.raises(TemplateSyntaxError) as exc_info:
+        engines["django"].from_string(template)
+
+    assert (
+        str(exc_info.value)
+        == "Could not parse the remainder: '=' from 'a='"
+    )
+
+    with pytest.raises(TemplateSyntaxError) as exc_info:
+        engines["rusty"].from_string(template)
+
+    assert (
+        str(exc_info.value)
+        == """\
+  × Incomplete keyword argument
+   ╭────
+ 1 │ {% load repeat from custom_tags %}{% repeat a= %}{% endrepeat %}
+   ·                                             ─┬
+   ·                                              ╰── here
+   ╰────
+"""
+    )
