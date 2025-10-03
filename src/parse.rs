@@ -2541,4 +2541,35 @@ mod tests {
             );
         })
     }
+
+    #[test]
+    fn test_simple_block_tag_partial_eq() {
+        Python::initialize();
+
+        Python::attach(|py| {
+            let func: Arc<Py<PyAny>> = PyDict::new(py).into_any().unbind().into();
+            let at = (0, 1);
+            let takes_context = true;
+            assert_eq!(
+                SimpleBlockTag {
+                    func: func.clone(),
+                    at,
+                    takes_context,
+                    args: Vec::new(),
+                    kwargs: Vec::new(),
+                    nodes: Vec::new(),
+                    target_var: Some("foo".to_string()),
+                },
+                SimpleBlockTag {
+                    func,
+                    at,
+                    takes_context,
+                    args: Vec::new(),
+                    kwargs: Vec::new(),
+                    nodes: Vec::new(),
+                    target_var: Some("foo".to_string()),
+                },
+            );
+        })
+    }
 }
