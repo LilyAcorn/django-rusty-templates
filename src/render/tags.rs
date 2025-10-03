@@ -12,7 +12,7 @@ use pyo3::types::{PyBool, PyDict, PyList, PyNone, PyString, PyTuple};
 use super::types::{AsBorrowedContent, Content, Context, PyContext};
 use super::{Evaluate, Render, RenderResult, Resolve, ResolveFailures, ResolveResult};
 use crate::error::{AnnotatePyErr, PyRenderError, RenderError};
-use crate::parse::{For, IfCondition, SimpleTag, Tag, Url};
+use crate::parse::{For, IfCondition, SimpleBlockTag, SimpleTag, Tag, TagElement, Url};
 use crate::template::django_rusty_templates::NoReverseMatch;
 use crate::types::TemplateString;
 use crate::utils::PyResultMethods;
@@ -653,6 +653,7 @@ impl Render for Tag {
             Self::For(for_tag) => for_tag.render(py, template, context)?,
             Self::Load => Cow::Borrowed(""),
             Self::SimpleTag(simple_tag) => simple_tag.render(py, template, context)?,
+            Self::SimpleBlockTag(simple_tag) => simple_tag.render(py, template, context)?,
             Self::Url(url) => url.render(py, template, context)?,
         })
     }
@@ -765,23 +766,104 @@ impl Render for For {
     }
 }
 
-impl SimpleTag {
-    fn call_tag<'t>(
-        &self,
-        py: Python<'_>,
-        template: TemplateString<'t>,
-        args: VecDeque<Bound<'_, PyAny>>,
-        kwargs: Bound<'_, PyDict>,
-    ) -> RenderResult<'t> {
-        let func = self.func.bind(py);
-        match func.call(
-            PyTuple::new(py, args).expect("All arguments should be valid Python objects"),
-            Some(&kwargs),
-        ) {
-            Ok(content) => Ok(Cow::Owned(content.to_string())),
-            Err(error) => Err(error.annotate(py, self.at, "here", template).into()),
-        }
+fn call_tag<'t>(
+    py: Python<'_>,
+    func: &Arc<Py<PyAny>>,
+    at: (usize, usize),
+    template: TemplateString<'t>,
+    args: VecDeque<Bound<'_, PyAny>>,
+    kwargs: Bound<'_, PyDict>,
+) -> RenderResult<'t> {
+    let func = func.bind(py);
+    match func.call(
+        PyTuple::new(py, args).expect("All arguments should be valid Python objects"),
+        Some(&kwargs),
+    ) {
+        Ok(content) => Ok(Cow::Owned(content.to_string())),
+        Err(error) => Err(error.annotate(py, at, "here", template).into()),
     }
+}
+
+fn add_context_to_args<'py>(
+    py: Python<'py>,
+    args: &mut VecDeque<Bound<'py, PyAny>>,
+    context: &mut Context,
+) -> Result<Bound<'py, PyAny>, PyErr> {
+    // Take ownership of `context` so we can pass it to Python.
+    // The `context` variable now points to an empty `Context` instance which will not be
+    // used except as a placeholder.
+    let swapped_context = std::mem::take(context);
+
+    // Wrap the context as a Python object and add it to the call args
+    let py_context = Bound::new(py, PyContext::new(swapped_context))?.into_any();
+    args.push_front(py_context.clone());
+
+    Ok(py_context)
+}
+
+fn retrieve_context<'py>(py: Python<'py>, py_context: Bound<'py, PyAny>, context: &mut Context) {
+    // Retrieve the PyContext wrapper from Python
+    let extracted_context: PyContext = py_context
+        .extract()
+        .expect("The type of py_context should not have changed");
+    // Ensure we only hold one reference in Rust by dropping the Python object.
+    drop(py_context);
+
+    // Try to remove the Context from the PyContext
+    let inner_context = match Arc::try_unwrap(extracted_context.context) {
+        // Fast path when we have the only reference in the Arc.
+        Ok(inner_context) => inner_context
+            .into_inner()
+            .expect("Mutex should be unlocked because Arc refcount is one."),
+        // Slow path when Python has held on to the context for some reason.
+        // We can still do the right thing by cloning.
+        Err(inner_context) => {
+            let guard = inner_context
+                .lock_py_attached(py)
+                .expect("Mutex should not be poisoned");
+            guard.clone_ref(py)
+        }
+    };
+    // Put the Context back in `context`
+    let _ = std::mem::replace(context, inner_context);
+}
+
+fn build_arg<'py>(
+    py: Python<'py>,
+    template: TemplateString<'_>,
+    context: &mut Context,
+    arg: &TagElement,
+) -> Result<Bound<'py, PyAny>, PyRenderError> {
+    let arg = match arg.resolve(py, template, context, ResolveFailures::Raise)? {
+        Some(arg) => arg.to_py(py)?,
+        None => PyString::intern(py, "").into_any(),
+    };
+    Ok(arg)
+}
+
+fn build_args<'py>(
+    py: Python<'py>,
+    template: TemplateString<'_>,
+    context: &mut Context,
+    args: &[TagElement],
+) -> Result<VecDeque<Bound<'py, PyAny>>, PyRenderError> {
+    args.iter()
+        .map(|arg| build_arg(py, template, context, arg))
+        .collect()
+}
+
+fn build_kwargs<'py>(
+    py: Python<'py>,
+    template: TemplateString<'_>,
+    context: &mut Context,
+    kwargs: &Vec<(String, TagElement)>,
+) -> Result<Bound<'py, PyDict>, PyRenderError> {
+    let _kwargs = PyDict::new(py);
+    for (key, value) in kwargs {
+        let value = value.resolve(py, template, context, ResolveFailures::Raise)?;
+        _kwargs.set_item(key, value)?;
+    }
+    Ok(_kwargs)
 }
 
 impl Render for SimpleTag {
@@ -791,60 +873,50 @@ impl Render for SimpleTag {
         template: TemplateString<'t>,
         context: &mut Context,
     ) -> RenderResult<'t> {
-        let mut args = VecDeque::new();
-        for arg in &self.args {
-            match arg.resolve(py, template, context, ResolveFailures::Raise)? {
-                None => return Ok(Cow::Borrowed("")),
-                Some(arg) => args.push_back(arg.to_py(py)?),
-            }
-        }
-        let kwargs = PyDict::new(py);
-        for (key, value) in &self.kwargs {
-            let value = value.resolve(py, template, context, ResolveFailures::Raise)?;
-            kwargs.set_item(key, value)?;
-        }
+        let mut args = build_args(py, template, context, &self.args)?;
+        let kwargs = build_kwargs(py, template, context, &self.kwargs)?;
         if self.takes_context {
-            // Take ownership of `context` so we can pass it to Python.
-            // The `context` variable now points to an empty `Context` instance which will not be
-            // used except as a placeholder.
-            let swapped_context = std::mem::take(context);
-
-            // Wrap the context as a Python object and add it to the call args
-            let py_context = Bound::new(py, PyContext::new(swapped_context))?.into_any();
-            args.push_front(py_context.clone());
+            let py_context = add_context_to_args(py, &mut args, context)?;
 
             // Actually call the tag
-            let result = self.call_tag(py, template, args, kwargs);
+            let result = call_tag(py, &self.func, self.at, template, args, kwargs);
 
-            // Retrieve the PyContext wrapper from Python
-            let extracted_context: PyContext = py_context
-                .extract()
-                .expect("The type of py_context should not have changed");
-            // Ensure we only hold one reference in Rust by dropping the Python object.
-            drop(py_context);
-
-            // Try to remove the Context from the PyContext
-            let inner_context = match Arc::try_unwrap(extracted_context.context) {
-                // Fast path when we have the only reference in the Arc.
-                Ok(inner_context) => inner_context
-                    .into_inner()
-                    .expect("Mutex should be unlocked because Arc refcount is one."),
-                // Slow path when Python has held on to the context for some reason.
-                // We can still do the right thing by cloning.
-                Err(inner_context) => {
-                    let guard = inner_context
-                        .lock_py_attached(py)
-                        .expect("Mutex should not be poisoned");
-                    guard.clone_ref(py)
-                }
-            };
-            // Put the Context back in `context`
-            let _ = std::mem::replace(context, inner_context);
+            retrieve_context(py, py_context, context);
 
             // Return the result of calling the tag
             result
         } else {
-            self.call_tag(py, template, args, kwargs)
+            call_tag(py, &self.func, self.at, template, args, kwargs)
+        }
+    }
+}
+
+impl Render for SimpleBlockTag {
+    fn render<'t>(
+        &self,
+        py: Python<'_>,
+        template: TemplateString<'t>,
+        context: &mut Context,
+    ) -> RenderResult<'t> {
+        let mut args = build_args(py, template, context, &self.args)?;
+        let kwargs = build_kwargs(py, template, context, &self.kwargs)?;
+
+        let content = self.nodes.render(py, template, context)?;
+        let content = PyString::new(py, &content).into_any();
+        args.push_front(content);
+
+        if self.takes_context {
+            let py_context = add_context_to_args(py, &mut args, context)?;
+
+            // Actually call the tag
+            let result = call_tag(py, &self.func, self.at, template, args, kwargs);
+
+            retrieve_context(py, py_context, context);
+
+            // Return the result of calling the tag
+            result
+        } else {
+            call_tag(py, &self.func, self.at, template, args, kwargs)
         }
     }
 }
